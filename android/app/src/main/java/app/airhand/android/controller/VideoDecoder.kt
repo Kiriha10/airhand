@@ -306,7 +306,15 @@ class VideoDecoder(
             fail("decoder error ${e.diagnosticInfo}")
         }
 
-        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {}
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            if (codec !== this@VideoDecoder.codec) return
+            fun value(key: String): String = runCatching {
+                if (format.containsKey(key)) format.getInteger(key).toString() else "unspecified"
+            }.getOrDefault("unspecified")
+            // 记录实际输出，色彩由码流声明；手机被控端可能使用全范围，不能统一强制为有限范围。
+            Log.i(TAG, "decoder ${codec.name} output: color-standard=${value(MediaFormat.KEY_COLOR_STANDARD)}, " +
+                "color-range=${value(MediaFormat.KEY_COLOR_RANGE)}, color-transfer=${value(MediaFormat.KEY_COLOR_TRANSFER)}")
+        }
     }
 
     companion object {

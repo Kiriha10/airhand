@@ -25,6 +25,9 @@ npm test
 cargo test --lib
 # what each hardware encoder reports about long-term reference frames (for investigating new GPUs)
 cargo test --lib ltr_probe -- --ignored --nocapture
+# Windows: color metadata in memory / GPU encoded bitstreams (requires ffprobe)
+cargo test --lib color_metadata_survives_memory_encoding -- --nocapture
+cargo test --lib gpu_zero_copy_on_every_adapter -- --nocapture
 # audio loopback capture (needs an audio output device; plays a 1.5 s test tone at -60 dBFS, barely audible)
 cargo test --lib loopback_captures_tone -- --ignored --nocapture
 # Windows: the controller's microphone into Steam Streaming Microphone (needs it on this computer), recorded back as a 1 kHz tone
@@ -74,6 +77,10 @@ cargo test --lib clipfiles -- --ignored --test-threads=1
 ```
 
 ## Debugging tools
+
+The Windows host preserves the captured sRGB transfer function and converts RGB to limited-range YUV using the BT.709 matrix. The MF encoder declares these attributes in its media types and the bitstream parameter sets. The OpenH264 fallback uses the same color description. The tests above use `ffprobe` on actual bitstreams and expect `color_space=bt709`, `color_primaries=bt709`, `color_transfer=iec61966-2-1`, and `color_range=tv`. Encoders without matching hardware are skipped.
+
+The Android controller logs `color-standard / color-range / color-transfer` when the decoder output format changes. iOS logs the primaries, matrix, transfer function, and range for the compressed input and displayed pixel buffers. When comparing text fringes on devices, keep the encoded resolution and display scale fixed and save PNG screenshots.
 
 ```bash
 # client/: debug build that starts straight in controller mode; AIRHAND_LOG sets the log level

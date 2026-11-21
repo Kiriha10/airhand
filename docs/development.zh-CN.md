@@ -25,6 +25,9 @@ npm test
 cargo test --lib
 # 每个硬件编码器的长期参考帧报告了什么（调查新显卡用）
 cargo test --lib ltr_probe -- --ignored --nocapture
+# Windows：内存 / GPU 编码后的码流色彩描述（需要 ffprobe）
+cargo test --lib color_metadata_survives_memory_encoding -- --nocapture
+cargo test --lib gpu_zero_copy_on_every_adapter -- --nocapture
 # 声音环回采集（需要声音输出设备，会以 -60 dBFS 播放 1.5 秒测试音，几乎听不见）
 cargo test --lib loopback_captures_tone -- --ignored --nocapture
 # Windows：控制端的麦克风写进 Steam Streaming Microphone（这台电脑上要有它），从它的录音端录回 1 kHz 的声音
@@ -74,6 +77,10 @@ cargo test --lib clipfiles -- --ignored --test-threads=1
 ```
 
 ## 调试工具
+
+Windows 被控端保留采集的 sRGB 传递函数，再按 BT.709 矩阵转换为有限范围 YUV。MF 编码在媒体类型和输出码流的参数集中声明这些属性，软件 OpenH264 回退也使用相同约定。色彩测试用 `ffprobe` 检查实际码流，预期结果为 `color_space=bt709`、`color_primaries=bt709`、`color_transfer=iec61966-2-1` 和 `color_range=tv`。没有对应硬件时跳过该编码器。
+
+Android 控制端在解码输出格式变化时记录 `color-standard / color-range / color-transfer`。iOS 记录码流输入与显示用像素缓冲的原色、矩阵、传递函数和范围。实机比较细文字彩边时，固定编码分辨率和显示缩放，保存 PNG。
 
 ```bash
 # client/：直接进入控制端的调试构建；AIRHAND_LOG 控制日志级别

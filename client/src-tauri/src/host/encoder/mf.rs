@@ -23,7 +23,7 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::core::{GUID, Interface, PWSTR};
 use yuvutils_rs::{YuvBiPlanarImageMut, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
-use super::{EncodedFrame, LtrControl, LtrReport, VideoEncoder, annexb_nal_types};
+use super::{EncodedFrame, LtrControl, LtrReport, VideoEncoder, annexb_nal_types, color};
 use crate::host::capture::{D3dSource, GpuFrame};
 
 fn subtype(c: Codec) -> GUID {
@@ -136,6 +136,19 @@ fn ltr_trusted(codec: Codec, name: &str) -> bool {
 
 fn pack(hi: u32, lo: u32) -> u64 {
     ((hi as u64) << 32) | lo as u64
+}
+
+/// RGB 采集保留 sRGB 传递函数；GPU / CPU 都只做 BT.709 矩阵和有限范围转换。
+/// 视频处理器的色彩设置不会自动变成码流的 VUI，输入、输出媒体类型都要声明，
+/// 否则 Android / iOS 的解码器可能按默认的 BT.601 解释实际的 BT.709 像素。
+fn set_sdr_color(ty: &IMFMediaType) -> Result<()> {
+    unsafe {
+        ty.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32)?;
+        ty.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_sRGB.0 as u32)?;
+        ty.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)?;
+        ty.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235.0 as u32)?;
+    }
+    Ok(())
 }
 
 // ───────────────────────────── GPU 零拷贝 ─────────────────────────────
@@ -567,6 +580,7 @@ impl MfEncoder {
             out.SetUINT64(&MF_MT_FRAME_RATE, pack(fps as u32, 1))?;
             out.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
             out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+            set_sdr_color(&out).context("SetOutputColor")?;
             match codec {
                 Codec::H264 => {
                     out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_High.0 as u32)?
@@ -588,6 +602,7 @@ impl MfEncoder {
             inp.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack(1, 1))?;
             inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
             inp.SetUINT32(&MF_MT_DEFAULT_STRIDE, w)?;
+            set_sdr_color(&inp).context("SetInputColor")?;
             transform
                 .SetInputType(0, &inp, 0)
                 .context("SetInputType(NV12)")?;
@@ -868,6 +883,7 @@ impl MfEncoder {
                 Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
                     unsafe {
                         let ty = self.transform.GetOutputAvailableType(0, 0)?;
+                        set_sdr_color(&ty).context("SetOutputColor after stream change")?;
                         self.transform.SetOutputType(0, &ty, 0)?;
                         self.seq_header = Self::sequence_header(&self.transform);
                     }
@@ -926,6 +942,9 @@ impl MfEncoder {
                     data = v;
                 }
             }
+            // 部分驱动忽略媒体类型的色彩属性，参数集里仍没有矩阵。以实际转换约定为准，
+            // 把每次发出的 SPS / Sequence Header 都补齐，控制端从任意关键帧开始也一致。
+            color::signal_sdr_color(self.info.codec, &mut data)?;
             Ok(EncodedFrame { data, key, ltr })
         }
     }
@@ -1101,6 +1120,135 @@ mod tests {
             ctx.Unmap(&staging, 0);
             planes
         }
+    }
+
+    /// 检查实际码流中的色彩描述，不能只检查传给 MFT 的属性（驱动可能没有写进 VUI）。
+    /// 没装 ffprobe 时跳过；输入只用合成画面。
+    fn assert_color_metadata(codec: Codec, stream: &[u8], tag: &str) -> bool {
+        let path =
+            std::env::temp_dir().join(format!("airhand-color-{}-{tag}.bin", std::process::id()));
+        std::fs::write(&path, stream).unwrap();
+        let format = match codec {
+            Codec::H265 => "hevc",
+            Codec::AV1 => "obu",
+            _ => "h264",
+        };
+        let out = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-f", format, "-i"])
+            .arg(&path)
+            .args([
+                "-show_entries",
+                "stream=width,height,color_range,color_space,color_transfer,color_primaries",
+                "-of",
+                "json",
+            ])
+            .output();
+        let out = match out {
+            Ok(out) => out,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let _ = std::fs::remove_file(&path);
+                println!("{tag}: ffprobe isn't installed, not checking color metadata");
+                return false;
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&path);
+                panic!("ffprobe ({tag}): {e}");
+            }
+        };
+        let rgb = std::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-f", format, "-i"])
+            .arg(&path)
+            .args([
+                "-frames:v",
+                "1",
+                "-pix_fmt",
+                "rgb24",
+                "-f",
+                "rawvideo",
+                "pipe:1",
+            ])
+            .output();
+        let _ = std::fs::remove_file(&path);
+        assert!(
+            out.status.success(),
+            "ffprobe ({tag}): {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let color = &value["streams"][0];
+        assert_eq!(color["color_range"], "tv", "{tag}: {color}");
+        assert_eq!(color["color_space"], "bt709", "{tag}: {color}");
+        assert_eq!(color["color_transfer"], "iec61966-2-1", "{tag}: {color}");
+        assert_eq!(color["color_primaries"], "bt709", "{tag}: {color}");
+        match rgb {
+            Ok(rgb) => {
+                assert!(
+                    rgb.status.success(),
+                    "ffmpeg ({tag}): {}",
+                    String::from_utf8_lossy(&rgb.stderr)
+                );
+                let w = color["width"].as_u64().unwrap() as usize;
+                let h = color["height"].as_u64().unwrap() as usize;
+                assert_eq!(rgb.stdout.len(), w * h * 3, "{tag}: RGB frame size");
+                for (x, want) in [(w / 4, [255u8, 0, 0]), (w * 3 / 4, [0, 0, 255])] {
+                    let i = ((h / 2) * w + x) * 3;
+                    let got = &rgb.stdout[i..i + 3];
+                    assert!(
+                        got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 12),
+                        "{tag}: {got:?} != {want:?}"
+                    );
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                println!("{tag}: ffmpeg isn't installed, not decoding RGB colors");
+            }
+            Err(e) => panic!("ffmpeg ({tag}): {e}"),
+        }
+        println!("{tag}: {color}");
+        true
+    }
+
+    #[test]
+    fn color_metadata_survives_memory_encoding() {
+        let (w, h) = (640u32, 360u32);
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        for (i, p) in bgra.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+            *p = if (i as u32 % w) < w / 2 {
+                [0, 0, 255, 255]
+            } else {
+                [255, 0, 0, 255]
+            };
+        }
+        let mut software = super::super::software::OpenH264Encoder::new(w, h, 30, 4000).unwrap();
+        let frame = software
+            .encode(&bgra, true)
+            .unwrap()
+            .expect("no software output");
+        let mut tested = assert_color_metadata(Codec::H264, &frame.data, "memory-OpenH264") as u32;
+        for codec in [Codec::H264, Codec::H265, Codec::AV1] {
+            for (i, activate) in enum_hardware(codec).into_iter().enumerate() {
+                let name = friendly_name(&activate);
+                let mut e = match unsafe {
+                    MfEncoder::open(activate, &name, codec, w, h, 30, 4000, None, None)
+                } {
+                    Ok(e) => e,
+                    Err(err) => {
+                        println!("{name} {codec:?}: {err:#}");
+                        continue;
+                    }
+                };
+                let mut stream = Vec::new();
+                for i in 0..3 {
+                    if let Some(f) = e.encode(&bgra, i == 0).unwrap() {
+                        stream.extend_from_slice(&f.data);
+                    }
+                }
+                assert!(!stream.is_empty(), "{name} {codec:?}: no encoded output");
+                tested +=
+                    assert_color_metadata(codec, &stream, &format!("memory-{codec:?}-{i}")) as u32;
+            }
+        }
+        println!("{tested} memory encoders checked for color metadata");
     }
 
     /// 视频处理器缩放、旋转、转换颜色：BT.709 有限范围（和内存那条路的 yuvutils 一样），
@@ -1361,6 +1509,7 @@ mod tests {
                 assert!(e.takes_gpu());
                 any |= codec == Codec::H264;
                 let mut sizes = Vec::new();
+                let mut stream = Vec::new();
                 for i in 0..6 {
                     let t = Instant::now();
                     let f = e
@@ -1372,7 +1521,9 @@ mod tests {
                         assert!(f.key, "{name} {codec:?}: frame {i} isn't a keyframe");
                     }
                     sizes.push((f.data.len(), t.elapsed()));
+                    stream.extend_from_slice(&f.data);
                 }
+                assert_color_metadata(codec, &stream, &format!("gpu-{}-{codec:?}", src.luid()));
                 // 内存里的画面不收
                 assert!(e.encode(&[0; 1280 * 720 * 4], false).is_err());
                 println!("{name} {codec:?}: {} {sizes:?}", e.info.name);

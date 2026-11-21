@@ -15,6 +15,8 @@
 //! * **CPU 回退**：软件编码、Linux 或显卡不支持零拷贝时，读出 BGRA，按需缩放并转换成 YUV 4:2:0。
 
 #[cfg(windows)]
+mod color;
+#[cfg(windows)]
 mod mf;
 mod software;
 #[cfg(target_os = "macos")]

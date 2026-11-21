@@ -72,7 +72,8 @@ impl OpenH264Encoder {
             .scene_change_detect(true)
             .adaptive_quantization(false)
             .background_detection(false)
-            .vui(VuiConfig::bt709());
+            // 桌面 RGB 是 sRGB；只改变 YUV 矩阵和范围，不转换传递函数。
+            .vui(VuiConfig::srgb().full_range(false));
         let enc = Encoder::with_api_config(OpenH264API::from_source(), cfg)
             .map_err(|e| anyhow!("can't initialize OpenH264: {e}"))?;
         let (cw, ch) = (w.div_ceil(2) as usize, h.div_ceil(2) as usize);

@@ -245,6 +245,7 @@ final class VideoDecoder {
             requestKeyframeSoon()
             return false
         }
+        logColorFormat(fmt, source: "input")
         let attrs: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as [CFString: Any],
@@ -324,6 +325,7 @@ final class VideoDecoder {
             var f: CMVideoFormatDescription?
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: image, formatDescriptionOut: &f)
             imageFormat = f
+            if let f { logColorFormat(f, source: "display") }
         }
         guard let imageFormat else { return }
         var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()), decodeTimeStamp: .invalid)
@@ -349,6 +351,18 @@ final class VideoDecoder {
             }
         }
         enqueue()
+    }
+
+    /// 输入码流与显示像素缓冲的色彩描述都记录下来；保留各被控端自己的范围和矩阵。
+    private func logColorFormat(_ fmt: CMVideoFormatDescription, source: String) {
+        func value(_ key: CFString) -> String {
+            guard let v = CMFormatDescriptionGetExtension(fmt, extensionKey: key) else { return "unspecified" }
+            return String(describing: v)
+        }
+        Log.info("video \(source) color: primaries=\(value(kCMFormatDescriptionExtension_ColorPrimaries)), " +
+                 "transfer=\(value(kCMFormatDescriptionExtension_TransferFunction)), " +
+                 "matrix=\(value(kCMFormatDescriptionExtension_YCbCrMatrix)), " +
+                 "full-range=\(value(kCMFormatDescriptionExtension_FullRangeVideo))")
     }
 
     // ───────────────────────────── 码流 ─────────────────────────────
