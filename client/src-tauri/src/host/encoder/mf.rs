@@ -3,8 +3,8 @@
 //! * 低延迟模式、无 B 帧、超长 GOP（只在需要时插入关键帧）；
 //! * 硬件 MFT 通常是异步的，这里用事件轮询把它变成"一进一出"的同步调用；
 //! * 画面的两种来路：
-//!   * **GPU 零拷贝**（[`GpuInput`]）：采集的纹理在同一个 D3D11 设备上用视频处理器（`ID3D11VideoProcessor`）
-//!     缩放、旋转、转成 NV12，`MFCreateDXGISurfaceBuffer` 包起来直接交给编码器（`IMFDXGIDeviceManager` 共用设备）。
+//!   * **GPU 零拷贝**（[`GpuInput`]）：视频处理器只缩放、旋转 RGB，着色器平均每个 2×2 块并转成 NV12；
+//!     `MFCreateDXGISurfaceBuffer` 包起来直接交给编码器（`IMFDXGIDeviceManager` 共用设备）。
 //!     只用和采集同一块显卡上的编码器（双显卡的笔记本上另一块显卡的编码器拿不到这个设备的纹理）；
 //!   * **内存**：BGRA 直接转换进 MF 缓冲区（NV12），编码器自己再传到显卡上。
 
@@ -25,6 +25,9 @@ use yuvutils_rs::{YuvBiPlanarImageMut, YuvConversionMode, YuvRange, YuvStandardM
 
 use super::{EncodedFrame, LtrControl, LtrReport, VideoEncoder, annexb_nal_types, color};
 use crate::host::capture::{D3dSource, GpuFrame};
+
+mod rgb_to_nv12;
+use rgb_to_nv12::{RgbToNv12, Target};
 
 fn subtype(c: Codec) -> GUID {
     match c {
@@ -153,11 +156,11 @@ fn set_sdr_color(ty: &IMFMediaType) -> Result<()> {
 
 // ───────────────────────────── GPU 零拷贝 ─────────────────────────────
 
-/// 视频处理器输出的 NV12 纹理轮流用几个：编码器可能还拿着上一帧
+/// 着色器输出的 NV12 纹理轮流用几个：编码器可能还拿着上一帧
 const GPU_TARGETS: usize = 3;
 
-/// GPU 零拷贝：采集的纹理（BGRA，没有旋转过）在同一个设备上用视频处理器缩放、旋转、转成 NV12（BT.709 有限范围，
-/// 和内存那条路一样），直接交给编码器。
+/// GPU 零拷贝：先按需缩放、旋转 BGRA，再明确平均每个 2×2 块的色度并转成 NV12
+/// （BT.709 有限范围，和内存那条路一样），直接交给编码器。
 pub(crate) struct GpuInput {
     /// 只处理这一路采集的画面（见 [`GpuFrame::source`]）
     source: u64,
@@ -166,7 +169,10 @@ pub(crate) struct GpuInput {
     video_ctx: ID3D11VideoContext,
     proc_enum: ID3D11VideoProcessorEnumerator,
     processor: ID3D11VideoProcessor,
-    targets: Vec<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
+    /// 尺寸一致或只裁掉奇数边缘时，直接从采集纹理转换，不经过视频处理器。
+    scaled: Option<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
+    converter: RgbToNv12,
+    targets: Vec<Target>,
     next: usize,
 }
 
@@ -202,9 +208,9 @@ impl GpuInput {
             if input & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT.0 as u32 == 0 {
                 bail!("the video processor can't read BGRA");
             }
-            let output = proc_enum.CheckVideoProcessorFormat(DXGI_FORMAT_NV12)?;
+            let output = proc_enum.CheckVideoProcessorFormat(DXGI_FORMAT_B8G8R8A8_UNORM)?;
             if output & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT.0 as u32 == 0 {
-                bail!("the video processor can't write NV12");
+                bail!("the video processor can't write BGRA");
             }
             if degrees != 0 {
                 let mut caps = D3D11_VIDEO_PROCESSOR_CAPS::default();
@@ -265,7 +271,7 @@ impl GpuInput {
                 };
                 video_ctx.VideoProcessorSetStreamRotation(vp, 0, true, r);
             }
-            // 桌面是全范围的 sRGB；输出 BT.709 有限范围（和内存那条路、控制端的解码器一致）
+            // 缩放、旋转期间保持全范围 RGB；RGB→YUV 由着色器完成，避免驱动只取一列色度。
             match video_ctx.cast::<ID3D11VideoContext1>() {
                 Ok(c1) => {
                     c1.VideoProcessorSetStreamColorSpace1(
@@ -275,23 +281,37 @@ impl GpuInput {
                     );
                     c1.VideoProcessorSetOutputColorSpace1(
                         vp,
-                        DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
+                        DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
                     );
                 }
                 Err(_) => {
                     // 位域：Usage(1) RGB_Range(1) YCbCr_Matrix(1) YCbCr_xvYCC(1) Nominal_Range(2)
                     let rgb_full = D3D11_VIDEO_PROCESSOR_COLOR_SPACE { _bitfield: 0 };
-                    let bt709_limited = D3D11_VIDEO_PROCESSOR_COLOR_SPACE {
-                        _bitfield: (1 << 2) | (1 << 4),
-                    };
                     video_ctx.VideoProcessorSetStreamColorSpace(vp, 0, &rgb_full);
-                    video_ctx.VideoProcessorSetOutputColorSpace(vp, &bt709_limited);
+                    video_ctx.VideoProcessorSetOutputColorSpace(vp, &rgb_full);
                 }
             }
 
-            let mut targets = Vec::with_capacity(GPU_TARGETS);
-            for _ in 0..GPU_TARGETS {
-                let tex = nv12_texture(d3d.device(), w, h)?;
+            let scaled = if degrees != 0 || !super::crop_only((in_w, in_h), (w, h)) {
+                let desc = D3D11_TEXTURE2D_DESC {
+                    Width: w,
+                    Height: h,
+                    MipLevels: 1,
+                    ArraySize: 1,
+                    Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    SampleDesc: DXGI_SAMPLE_DESC {
+                        Count: 1,
+                        Quality: 0,
+                    },
+                    Usage: D3D11_USAGE_DEFAULT,
+                    BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+                    ..Default::default()
+                };
+                let mut tex = None;
+                d3d.device()
+                    .CreateTexture2D(&desc, None, Some(&mut tex))
+                    .context("scaled RGB texture")?;
+                let tex = tex.context("null scaled RGB texture")?;
                 let desc = D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC {
                     ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
                     Anonymous: D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0 {
@@ -303,8 +323,15 @@ impl GpuInput {
                     .CreateVideoProcessorOutputView(&tex, &proc_enum, &desc, Some(&mut view))
                     .context("CreateVideoProcessorOutputView")?;
                 let view = view.ok_or_else(|| anyhow!("the output view is null"))?;
-                targets.push((tex, view));
-            }
+                Some((tex, view))
+            } else {
+                None
+            };
+
+            let converter = RgbToNv12::new(d3d.device(), w, h)?;
+            let targets = (0..GPU_TARGETS)
+                .map(|_| Target::new(d3d.device(), w, h))
+                .collect::<Result<Vec<_>>>()?;
 
             let mut token = 0u32;
             let mut manager = None;
@@ -321,6 +348,8 @@ impl GpuInput {
                 video_ctx,
                 proc_enum,
                 processor,
+                scaled,
+                converter,
                 targets,
                 next: 0,
             })
@@ -332,48 +361,55 @@ impl GpuInput {
         if g.source() != self.source {
             bail!("the frame comes from another capture device");
         }
-        let (tex, out_view) = &self.targets[self.next];
-        self.next = (self.next + 1) % self.targets.len();
-        let desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
-            FourCC: 0,
-            ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
-            Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 {
-                Texture2D: D3D11_TEX2D_VPIV {
-                    MipSlice: 0,
-                    ArraySlice: 0,
+        let target = &self.targets[self.next];
+        let rgb = if let Some((scaled, out_view)) = &self.scaled {
+            let desc = D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC {
+                FourCC: 0,
+                ViewDimension: D3D11_VPIV_DIMENSION_TEXTURE2D,
+                Anonymous: D3D11_VIDEO_PROCESSOR_INPUT_VIEW_DESC_0 {
+                    Texture2D: D3D11_TEX2D_VPIV {
+                        MipSlice: 0,
+                        ArraySlice: 0,
+                    },
                 },
-            },
-        };
-        unsafe {
-            // 输入视图很便宜，每帧建一个（帧缓冲池里的纹理会轮流用，不必缓存）
-            let mut in_view = None;
-            self.video_device
-                .CreateVideoProcessorInputView(
-                    g.texture(),
-                    &self.proc_enum,
-                    &desc,
-                    Some(&mut in_view),
-                )
-                .context("CreateVideoProcessorInputView")?;
-            let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
-                Enable: true.into(),
-                pInputSurface: ManuallyDrop::new(in_view),
-                ..Default::default()
             };
-            let r = self.video_ctx.VideoProcessorBlt(
-                &self.processor,
-                out_view,
-                0,
-                std::slice::from_ref(&stream),
-            );
-            ManuallyDrop::drop(&mut stream.pInputSurface);
-            r.context("VideoProcessorBlt")?;
-        }
-        Ok(tex.clone())
+            unsafe {
+                // 输入视图很便宜，每帧建一个（帧缓冲池里的纹理会轮流用，不必缓存）
+                let mut in_view = None;
+                self.video_device
+                    .CreateVideoProcessorInputView(
+                        g.texture(),
+                        &self.proc_enum,
+                        &desc,
+                        Some(&mut in_view),
+                    )
+                    .context("CreateVideoProcessorInputView")?;
+                let mut stream = D3D11_VIDEO_PROCESSOR_STREAM {
+                    Enable: true.into(),
+                    pInputSurface: ManuallyDrop::new(in_view),
+                    ..Default::default()
+                };
+                let r = self.video_ctx.VideoProcessorBlt(
+                    &self.processor,
+                    out_view,
+                    0,
+                    std::slice::from_ref(&stream),
+                );
+                ManuallyDrop::drop(&mut stream.pInputSurface);
+                r.context("VideoProcessorBlt")?;
+            }
+            scaled
+        } else {
+            g.texture()
+        };
+        self.converter
+            .convert(g.d3d().device(), g.d3d().context(), rgb, target)?;
+        self.next = (self.next + 1) % self.targets.len();
+        Ok(target.texture.clone())
     }
 }
 
-/// 视频处理器的输出、编码器的输入
+/// 着色器的输出、编码器的输入
 fn nv12_texture(device: &ID3D11Device, w: u32, h: u32) -> Result<ID3D11Texture2D> {
     let mut desc = D3D11_TEXTURE2D_DESC {
         Width: w,
@@ -386,7 +422,7 @@ fn nv12_texture(device: &ID3D11Device, w: u32, h: u32) -> Result<ID3D11Texture2D
             Quality: 0,
         },
         Usage: D3D11_USAGE_DEFAULT,
-        // 视频处理器的输出视图要 RENDER_TARGET；声明给编码器用（有的驱动据此放在编码器读起来快的地方），不认就不要
+        // NV12 的两个平面作为 RENDER_TARGET；声明给编码器用（有的驱动据此优化分配），不认就不要
         BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_VIDEO_ENCODER.0) as u32,
         CPUAccessFlags: 0,
         MiscFlags: 0,
@@ -1296,6 +1332,46 @@ mod tests {
                 assert!(close(red, RED), "{name} {rotation:?}: red is {red:?}");
                 assert!(close(blue, BLUE), "{name} {rotation:?}: blue is {blue:?}");
             }
+        }
+    }
+
+    /// 每个 2×2 块的红、绿、蓝、白平均为中性灰；只取一列会产生明显彩边。
+    #[test]
+    fn gpu_conversion_preserves_balanced_chroma() {
+        let (w, h) = (256u32, 128u32);
+        for (name, src) in sources() {
+            let g = GpuFrame::new(src.clone(), w, h, Rotation::None).unwrap();
+            let mut px = vec![0u8; (w * h * 4) as usize];
+            for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let (x, y) = (i as u32 % w, i as u32 / w);
+                *p = match (x & 1, y & 1) {
+                    (0, 0) => [0, 0, 255, 255],
+                    (1, 0) => [0, 255, 0, 255],
+                    (0, 1) => [255, 0, 0, 255],
+                    _ => [255, 255, 255, 255],
+                };
+            }
+            unsafe {
+                src.context()
+                    .UpdateSubresource(g.texture(), 0, None, px.as_ptr().cast(), w * 4, 0);
+            }
+            let mut input = GpuInput::new(&g, w, h, 30).unwrap();
+            let tex = input.convert(&g).unwrap();
+            let (y, uv) = read_nv12(&src, &tex, w, h);
+            let i = (h / 4 * w + w / 2) as usize;
+            println!(
+                "{name}: Y {:?}, balanced UV {:?}",
+                &y[i..i + 8],
+                &uv[i..i + 8]
+            );
+            assert!(
+                uv[i..i + 8].iter().all(|c| c.abs_diff(128) <= 2),
+                "{name}: neutral 2×2 blocks became {:?}",
+                &uv[i..i + 8]
+            );
+            // 平均色度不能同时模糊原始亮度；各像素的 BT.709 Y 值仍然不同。
+            assert_eq!(&y[i..i + 4], &[63, 173, 63, 173]);
+            assert_eq!(&y[i + w as usize..i + w as usize + 4], &[32, 235, 32, 235]);
         }
     }
 

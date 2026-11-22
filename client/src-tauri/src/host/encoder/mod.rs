@@ -8,7 +8,7 @@
 //!
 //! # 画面怎么到编码器
 //!
-//! * **GPU 零拷贝**（硬件编码、画面在 GPU 上时）：画面不离开显卡。Windows 用 `ID3D11VideoProcessor` 缩放并转成 NV12，
+//! * **GPU 零拷贝**（硬件编码、画面在 GPU 上时）：画面不离开显卡。Windows 用 `ID3D11VideoProcessor` 缩放 RGB，再由着色器平均色度并转成 NV12，
 //!   `MFCreateDXGISurfaceBuffer` 直接交给硬件 MFT（见 mf.rs）；macOS 的 ScreenCaptureKit 采集时就按编码尺寸输出 NV12，
 //!   `CVPixelBuffer` 原样交给 VideoToolbox（见 vt.rs、`capture/sck.rs`）。省掉了读回、大块拷贝、CPU 缩放和色彩转换
 //!   （4K、Retina 屏上这些加起来每帧十几毫秒）；
