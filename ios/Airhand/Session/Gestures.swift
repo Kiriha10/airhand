@@ -3,7 +3,8 @@ import Foundation
 
 /// 把手指的动作变成远端的鼠标操作（纯逻辑，和 Android 的 Gestures.kt 是同一套规则）。
 ///
-/// **触控板**（默认用于电脑）：单指滑动移动指针（慢速精细、快速加速）；单击 = 左键，双击 = 双击；长按 = 右键；
+/// **触控板**（默认用于电脑）：单指滑动移动指针；单击 = 左键，双击 = 双击；长按 = 左键拖动；
+/// 拖动时短暂抬指可换位置，轻点或松手稍等结束。
 /// 点一下再按住拖动 = 按住左键拖动；双指点击 = 右键；双指拖动 = 滚动（松手后惯性）；双指捏合 = 放大画面。
 /// **触屏**：点哪里就是哪里；长按 = 右键；单指拖动 = 按住左键拖动；双指拖动 = 滚动；双指捏合 = 放大 / 移动画面。
 /// **多点触摸**（对方是手机，能接收触摸）：每个手指原样传过去。
@@ -22,6 +23,7 @@ final class Gestures {
         func delta(_ nx: CGFloat, _ ny: CGFloat)
         func button(_ b: String, _ down: Bool, click: Bool)
         func click(_ b: String)
+        func pressingChanged()
         func wheel(_ dx: Int, _ dy: Int)
         func zoom(_ factor: CGFloat, _ focus: CGPoint)
         func pan(_ dx: CGFloat, _ dy: CGFloat)
@@ -38,7 +40,7 @@ final class Gestures {
     struct P { var id: Int; var x: CGFloat; var y: CGFloat; var pt: CGPoint { CGPoint(x: x, y: y) } }
 
     weak var out: Out?
-    var mode = Mode.trackpad
+    var mode = Mode.trackpad { didSet { if mode != oldValue { cancel() } } }
     var relative = false
     var lookGain: CGFloat?
     let slop: CGFloat
@@ -61,6 +63,8 @@ final class Gestures {
     private var lastX: CGFloat = 0, lastY: CGFloat = 0, lastT: Double = 0
     private var moved = false, longFired = false, dragging = false, looking = false, doubleTapDrag = false
     private var longTimer: DispatchWorkItem?
+    private var dragResumeTimer: DispatchWorkItem?
+    private var dragResumePending = false, resumedDrag = false
     private var pendingDown = false
     private var downTimer: DispatchWorkItem?
     private var twoStartT: Double = 0, twoStartSpan: CGFloat = 0, twoStartCx: CGFloat = 0, twoStartCy: CGFloat = 0
@@ -76,6 +80,7 @@ final class Gestures {
     private var lastTapT: Double = -10_000, lastTapX: CGFloat = 0, lastTapY: CGFloat = 0
 
     static let longPressMs = 450.0, tapMs = 350.0, doubleTapMs = 300.0, twoTapMs = 300.0, threeTapMs = 400.0, passthroughDelayMs = 60.0
+    static let dragResumeMs = 500.0, twoTapJoinMs = 150.0
     /// 双指滚动：每点多少滚轮单位（120 = 一格，约 13 点一格，和 Android 上约 40 像素一格差不多）
     static let wheelPerPx: CGFloat = 9
     private static let frameMs: CGFloat = 16, flingMin: CGFloat = 0.6, flingStop: CGFloat = 0.05, flingDecay: CGFloat = 0.93
@@ -96,6 +101,15 @@ final class Gestures {
     func down(_ p: P, _ t: Double) {
         stopFling()
         guard let out else { return }
+        let resume = kind == .none && dragResumePending && mode == .trackpad && !turning
+        if kind != .none { cancel() }
+        longTimer?.cancel(); longTimer = nil
+        if resume {
+            dragResumeTimer?.cancel(); dragResumeTimer = nil
+            dragResumePending = false
+        } else {
+            endDrag()
+        }
         if mode == .multitouch {
             kind = .many
             touchIds.removeAll()
@@ -108,12 +122,12 @@ final class Gestures {
         maxFingers = 1
         startX = p.x; startY = p.y; startT = t
         lastX = p.x; lastY = p.y; lastT = t
-        moved = false; longFired = false; dragging = false; looking = false; doubleTapDrag = false
+        moved = false; longFired = false; looking = false; doubleTapDrag = false; resumedDrag = resume
         switch mode {
         case .multitouch: break
         case .trackpad:
-            doubleTapDrag = t - lastTapT < Self.doubleTapMs && hypot(p.x - lastTapX, p.y - lastTapY) < slop * 4
-            if !doubleTapDrag { longTimer = after(Self.longPressMs) { [weak self] in self?.onLongPress() } }
+            doubleTapDrag = !turning && t - lastTapT < Self.doubleTapMs && cursorX == lastTapX && cursorY == lastTapY
+            if !resume { longTimer = after(Self.longPressMs) { [weak self] in self?.onLongPress() } }
         case .touch:
             if !relative, let r = out.toRemote(p.pt) {
                 setCursor(r.x, r.y)
@@ -133,8 +147,7 @@ final class Gestures {
         pendingDown = false
         guard let r = out.toRemote(CGPoint(x: startX, y: startY)) else { return }
         out.move(r.x, r.y)
-        out.button("left", true)
-        dragging = true
+        pressLeft()
         if lastX != startX || lastY != startY, let r2 = out.toRemote(CGPoint(x: lastX, y: lastY)) { out.move(r2.x, r2.y) }
     }
 
@@ -144,7 +157,7 @@ final class Gestures {
         longFired = true
         out.haptic()
         switch mode {
-        case .trackpad: click("right")
+        case .trackpad: startTrackpadDrag()
         case .touch:
             out.ripple(CGPoint(x: startX, y: startY))
             click("right")
@@ -156,6 +169,21 @@ final class Gestures {
         guard let out else { return }
         if !relative { out.move(cursorX, cursorY) }
         out.click(b)
+    }
+
+    private func pressLeft() {
+        guard !dragging else { return }
+        dragging = true
+        out?.button("left", true)
+        out?.pressingChanged()
+    }
+
+    private func startTrackpadDrag() {
+        guard !dragging, !turning, let out else { return }
+        longTimer?.cancel(); longTimer = nil
+        lastTapT = -10_000
+        if !relative { out.move(cursorX, cursorY) }
+        pressLeft()
     }
 
     func pointerDown(_ p: P, _ ps: [P], _ t: Double) {
@@ -171,6 +199,7 @@ final class Gestures {
             return
         }
         if kind == .one {
+            let wasDragging = dragging
             if pendingDown {
                 pendingDown = false
                 downTimer?.cancel()
@@ -182,7 +211,7 @@ final class Gestures {
             twoStartCx = cx; twoStartCy = cy; twoStartSpan = span
             twoLastCx = cx; twoLastCy = cy; twoLastSpan = span
             twoKind = mode == .passthrough ? 2 : 0
-            twoMoved = moved
+            twoMoved = moved || wasDragging || (mode == .trackpad && t - startT >= Self.twoTapJoinMs)
             wheelAccX = 0; wheelAccY = 0; velX = 0; velY = 0
         }
     }
@@ -215,9 +244,7 @@ final class Gestures {
             case .trackpad:
                 if doubleTapDrag {
                     out.haptic()
-                    if !relative { out.move(cursorX, cursorY) }
-                    out.button("left", true)
-                    dragging = true
+                    startTrackpadDrag()
                 }
             case .touch:
                 if !longFired {
@@ -225,8 +252,7 @@ final class Gestures {
                         looking = true
                     } else {
                         if !relative, let r = out.toRemote(CGPoint(x: startX, y: startY)) { out.move(r.x, r.y) }
-                        out.button("left", true)
-                        dragging = true
+                        pressLeft()
                     }
                 }
             case .passthrough:
@@ -238,7 +264,7 @@ final class Gestures {
             }
         }
         lastX = p.x; lastY = p.y; lastT = t
-        if !moved && mode != .passthrough { return }
+        if !moved && (resumedDrag || !dragging) && mode != .passthrough { return }
         switch mode {
         case .trackpad:
             let size = out.contentSize()
@@ -344,14 +370,22 @@ final class Gestures {
             switch mode {
             case .trackpad:
                 if dragging {
-                    out.button("left", false)
-                } else if !moved && !longFired && t - startT < Self.tapMs {
+                    if moved && !turning {
+                        dragResumePending = true
+                        dragResumeTimer = after(Self.dragResumeMs) { [weak self] in
+                            guard let self, self.dragResumePending else { return }
+                            self.endDrag()
+                        }
+                    } else {
+                        endDrag()
+                    }
+                } else if !moved && !longFired && (!turning || t - startT < Self.tapMs) {
                     click("left")
-                    lastTapT = t; lastTapX = p.x; lastTapY = p.y
+                    lastTapT = t; lastTapX = cursorX; lastTapY = cursorY
                 }
             case .touch:
                 if dragging {
-                    out.button("left", false)
+                    endDrag()
                 } else if !longFired && !looking && !(turning && t - startT >= Self.tapMs) {
                     out.ripple(CGPoint(x: startX, y: startY))
                     click("left")
@@ -367,23 +401,24 @@ final class Gestures {
                     out.button("left", false, click: true)
                 } else if dragging {
                     if let r = out.toRemote(p.pt) { out.move(r.x, r.y) }
-                    out.button("left", false)
+                    endDrag()
                 }
             case .multitouch: break
             }
         }
-        dragging = false
         looking = false
         kind = .none
     }
 
     func cancel() {
+        stopFling()
         looking = false
         for (id, pos) in touchPos { touchUp(P(id: id, x: pos.x, y: pos.y), "cancel") }
         longTimer?.cancel()
         downTimer?.cancel()
         pendingDown = false
         endDrag()
+        lastTapT = -10_000
         kind = .none
     }
 
@@ -403,9 +438,13 @@ final class Gestures {
     }
 
     private func endDrag() {
+        dragResumeTimer?.cancel(); dragResumeTimer = nil
+        dragResumePending = false; resumedDrag = false
         if dragging {
-            out?.button("left", false)
             dragging = false
+            lastTapT = -10_000
+            out?.button("left", false)
+            out?.pressingChanged()
         }
     }
 
@@ -438,6 +477,7 @@ final class Gestures {
 }
 
 extension Gestures.Out {
+    func pressingChanged() {}
     /// 真实按住和拖动仍使用独立按钮事件。
     func button(_ b: String, _ down: Bool) { button(b, down, click: false) }
 }

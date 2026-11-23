@@ -111,7 +111,7 @@ enum L {
         "g_slide": "单指滑动", "g_tap": "单击", "g_long_press": "长按", "g_tap_then_drag": "点一下再按住拖", "g_two_tap": "双指点击",
         "g_two_slide": "双指拖动", "g_pinch": "双指捏合", "g_three_tap": "三指点击", "g_move_pointer": "移动指针",
         "g_left_click": "左键单击（快速点两下 = 双击）", "g_right_click": "右键", "g_click_there": "在手指处单击",
-        "g_right_click_there": "在手指处右键", "g_drag": "按住左键拖动（选文字、拖窗口）", "g_scroll": "滚动（松手有惯性）",
+        "g_right_click_there": "在手指处右键", "g_drag": "按住左键拖动（选文字、拖窗口）", "g_drag_trackpad": "按住左键拖动；可短暂抬指换位置，轻点结束拖动", "g_scroll": "滚动（松手有惯性）",
         "g_zoom": "放大画面（指针会带着画面走）", "g_zoom_pan": "放大 / 移动画面", "g_keyboard": "打开 / 收起键盘",
         "g_same_as_phone": "直接作用在对方手机上", "g_mouse": "外接鼠标、键盘", "g_mouse_desc": "直接对应对方的鼠标、键盘；iPad 上可以锁定鼠标玩游戏",
         // 游戏按键
@@ -269,7 +269,7 @@ enum L {
         "g_slide": "One-finger slide", "g_tap": "Tap", "g_long_press": "Long press", "g_tap_then_drag": "Tap, then hold and drag", "g_two_tap": "Two-finger tap",
         "g_two_slide": "Two-finger drag", "g_pinch": "Pinch", "g_three_tap": "Three-finger tap", "g_move_pointer": "Move the pointer",
         "g_left_click": "Left click (tap twice = double-click)", "g_right_click": "Right click", "g_click_there": "Click there",
-        "g_right_click_there": "Right-click there", "g_drag": "Drag with the left button (select text, move windows)", "g_scroll": "Scroll (with inertia)",
+        "g_right_click_there": "Right-click there", "g_drag": "Drag with the left button (select text, move windows)", "g_drag_trackpad": "Drag with the left button. Lift briefly to reposition; tap to drop.", "g_scroll": "Scroll (with inertia)",
         "g_zoom": "Zoom (the picture follows the pointer)", "g_zoom_pan": "Zoom / move the picture", "g_keyboard": "Show / hide the keyboard",
         "g_same_as_phone": "Goes straight to the remote phone", "g_mouse": "Mouse and keyboard", "g_mouse_desc": "Map to the remote mouse and keyboard; on iPad the mouse can be locked for games",
         "game_show": "Show on the picture", "game_show_desc": "Hold a button to hold its key; elsewhere works as usual, and dragging turns the view when a game hides the cursor",

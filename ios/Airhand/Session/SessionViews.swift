@@ -217,7 +217,7 @@ struct GestureTips: View {
         switch mode {
         case .trackpad:
             return [("hand.point.up.left", "g_slide", "g_move_pointer"), ("hand.tap", "g_tap", "g_left_click"),
-                    ("hand.point.up.braille", "g_long_press", "g_right_click"), ("hand.draw", "g_tap_then_drag", "g_drag"),
+                    ("hand.point.up.braille", "g_long_press", "g_drag_trackpad"), ("hand.draw", "g_tap_then_drag", "g_drag_trackpad"),
                     ("hand.tap.fill", "g_two_tap", "g_right_click"), ("arrow.up.and.down", "g_two_slide", "g_scroll"),
                     ("arrow.up.left.and.arrow.down.right", "g_pinch", "g_zoom"), ("keyboard", "g_three_tap", "g_keyboard"),
                     ("computermouse", "g_mouse", "g_mouse_desc")]

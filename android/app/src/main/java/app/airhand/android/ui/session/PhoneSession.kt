@@ -853,8 +853,8 @@ private fun gestureList(mode: Gestures.Mode): List<Pair<Int, Int>> = when (mode)
     Gestures.Mode.TRACKPAD -> listOf(
         R.string.g_slide to R.string.g_move_pointer,
         R.string.g_tap to R.string.g_left_click,
-        R.string.g_long_press to R.string.g_right_click,
-        R.string.g_tap_then_drag to R.string.g_drag,
+        R.string.g_long_press to R.string.g_drag_trackpad,
+        R.string.g_tap_then_drag to R.string.g_drag_trackpad,
         R.string.g_two_tap to R.string.g_right_click,
         R.string.g_two_slide to R.string.g_scroll,
         R.string.g_pinch to R.string.g_zoom,

@@ -14,7 +14,7 @@ import kotlin.math.min
  * **触控板**（默认用于电脑）：屏幕当触控板用，本机画出指针
  * * 单指滑动 = 移动指针（慢速精细、快速加速）
  * * 单击 = 左键单击；双击 = 双击
- * * 长按 = 右键
+ * * 长按 = 按住左键拖动；拖动时短暂抬指可换位置，轻点或松手稍等结束
  * * 点一下再按住拖动（双击不松开）= 按住左键拖动（选文字、拖窗口）
  * * 双指点击 = 右键；双指拖动 = 滚动（松手后惯性滚动）
  * * 双指捏合 = 放大画面（放大后画面跟着指针走）
@@ -54,6 +54,8 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
         fun delta(nx: Float, ny: Float)
         fun button(button: String, down: Boolean, click: Boolean = false)
         fun click(button: String)
+        /** 长按和续拖超时由定时器触发，也要通知视图更新按钮状态。 */
+        fun pressingChanged() {}
         fun wheel(dx: Int, dy: Int)
         fun zoom(factor: Float, fx: Float, fy: Float)
         fun pan(dx: Float, dy: Float)
@@ -80,6 +82,12 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
     data class P(val id: Int, val x: Float, val y: Float)
 
     var mode = Mode.TRACKPAD
+        set(value) {
+            if (field != value) {
+                field = value
+                cancel()
+            }
+        }
 
     /** 发相对移动（见类的说明）。只对触控板和触屏方式有用：直通、多点触摸是控制手机，没有光标 */
     var relative = false
@@ -121,6 +129,9 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
     private var looking = false
     private var doubleTapDrag = false
     private var longTimer: Any? = null
+    private var dragResumeTimer: Any? = null
+    private var dragResumePending = false
+    private var resumedDrag = false
 
     // 直通模式：按下稍等一下再发，第二个手指很快落下就当作缩放，不点到对方
     private var pendingDown = false
@@ -156,6 +167,17 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
 
     fun down(p: P, t: Long) {
         stopFling()
+        val resume = kind == Kind.NONE && dragResumePending && mode == Mode.TRACKPAD && !turning
+        if (kind != Kind.NONE) cancel()
+        timers.cancel(longTimer)
+        longTimer = null
+        if (resume) {
+            timers.cancel(dragResumeTimer)
+            dragResumeTimer = null
+            dragResumePending = false
+        } else {
+            endDrag()
+        }
         if (mode == Mode.MULTITOUCH) {
             kind = Kind.MANY
             touchIds.clear()
@@ -170,15 +192,16 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
         lastX = p.x; lastY = p.y; lastT = t
         moved = false
         longFired = false
-        dragging = false
+        resumedDrag = resume
         looking = false
         doubleTapDrag = false
         when (mode) {
             // 多点触摸方式在函数开头已经处理完了
             Mode.MULTITOUCH -> {}
             Mode.TRACKPAD -> {
-                doubleTapDrag = t - lastTapT < DOUBLE_TAP_MS && hypot(p.x - lastTapX, p.y - lastTapY) < slop * 4
-                if (!doubleTapDrag) longTimer = timers.after(LONG_PRESS_MS) { onLongPress() }
+                // 触控板的落指位置与远端指针无关：看上次点击后指针是否仍在原处。
+                doubleTapDrag = !turning && t - lastTapT < DOUBLE_TAP_MS && cursorX == lastTapX && cursorY == lastTapY
+                if (!resume) longTimer = timers.after(LONG_PRESS_MS) { onLongPress() }
             }
             Mode.TOUCH -> {
                 // 相对移动时（游戏）按下不挪光标，不然视角会跳一下
@@ -203,8 +226,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
         pendingDown = false
         val r = out.toRemote(startX, startY) ?: return
         out.move(r.first, r.second)
-        out.button(LEFT, true)
-        dragging = true
+        pressLeft()
         if (lastX != startX || lastY != startY) {
             out.toRemote(lastX, lastY)?.let { out.move(it.first, it.second) }
         }
@@ -221,7 +243,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
         when (mode) {
             // 多点触摸方式在函数开头已经处理完了
             Mode.MULTITOUCH -> {}
-            Mode.TRACKPAD -> click(RIGHT)
+            Mode.TRACKPAD -> startTrackpadDrag()
             Mode.TOUCH -> {
                 out.ripple(startX, startY)
                 click(RIGHT)
@@ -233,6 +255,22 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
     private fun click(button: String) {
         if (!relative) out.move(cursorX, cursorY)
         out.click(button)
+    }
+
+    private fun pressLeft() {
+        if (dragging) return
+        dragging = true
+        out.button(LEFT, true)
+        out.pressingChanged()
+    }
+
+    private fun startTrackpadDrag() {
+        if (dragging || turning) return
+        timers.cancel(longTimer)
+        longTimer = null
+        lastTapT = -10_000L
+        if (!relative) out.move(cursorX, cursorY)
+        pressLeft()
     }
 
     /** 又一个手指落下（`p`），`ps` 是现在所有的手指 */
@@ -250,6 +288,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
             return
         }
         if (kind == Kind.ONE) {
+            val wasDragging = dragging
             if (pendingDown) {
                 // 第二个手指很快落下：是缩放，不是点按
                 pendingDown = false
@@ -262,7 +301,8 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
             twoStartCx = cx; twoStartCy = cy; twoStartSpan = span
             twoLastCx = cx; twoLastCy = cy; twoLastSpan = span
             twoKind = if (mode == Mode.PASSTHROUGH) 2 else 0
-            twoMoved = moved
+            // 拖动和迟到的第二指不能变成右键；正常双指轻点仍保留。
+            twoMoved = moved || wasDragging || (mode == Mode.TRACKPAD && t - startT >= TWO_TAP_JOIN_MS)
             wheelAccX = 0f; wheelAccY = 0f
             velX = 0f; velY = 0f
         }
@@ -298,9 +338,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
                 Mode.MULTITOUCH -> {}
                 Mode.TRACKPAD -> if (doubleTapDrag) {
                     out.haptic()
-                    if (!relative) out.move(cursorX, cursorY)
-                    out.button(LEFT, true)
-                    dragging = true
+                    startTrackpadDrag()
                 }
                 Mode.TOUCH -> if (!longFired) {
                     if (relative && lookGain != null) {
@@ -308,8 +346,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
                     } else {
                         // 从按下的位置开始拖
                         if (!relative) out.toRemote(startX, startY)?.let { out.move(it.first, it.second) }
-                        out.button(LEFT, true)
-                        dragging = true
+                        pressLeft()
                     }
                 }
                 Mode.PASSTHROUGH -> if (pendingDown) {
@@ -320,7 +357,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
             }
         }
         lastX = p.x; lastY = p.y; lastT = t
-        if (!moved && mode != Mode.PASSTHROUGH) return
+        if (!moved && (resumedDrag || !dragging) && mode != Mode.PASSTHROUGH) return
         when (mode) {
             // 多点触摸方式在函数开头已经处理完了
             Mode.MULTITOUCH -> {}
@@ -444,17 +481,22 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
                 Mode.MULTITOUCH -> {}
                 Mode.TRACKPAD -> {
                     if (dragging) {
-                        out.button(LEFT, false)
-                    } else if (!moved && !longFired && t - startT < TAP_MS) {
+                        if (moved && !turning) {
+                            dragResumePending = true
+                            dragResumeTimer = timers.after(DRAG_RESUME_MS) { if (dragResumePending) endDrag() }
+                        } else {
+                            endDrag()
+                        }
+                    } else if (!moved && !longFired && (!turning || t - startT < TAP_MS)) {
                         click(LEFT)
                         lastTapT = t
-                        lastTapX = p.x
-                        lastTapY = p.y
+                        lastTapX = cursorX
+                        lastTapY = cursorY
                     }
                 }
                 Mode.TOUCH -> {
                     if (dragging) {
-                        out.button(LEFT, false)
+                        endDrag()
                     } else if (!longFired && !looking && !(turning && t - startT >= TAP_MS)) {
                         out.ripple(startX, startY)
                         click(LEFT)
@@ -472,23 +514,24 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
                         out.button(LEFT, false, click = true)
                     } else if (dragging) {
                         out.toRemote(p.x, p.y)?.let { out.move(it.first, it.second) }
-                        out.button(LEFT, false)
+                        endDrag()
                     }
                 }
             }
         }
-        dragging = false
         looking = false
         kind = Kind.NONE
     }
 
     fun cancel() {
+        stopFling()
         looking = false
         for (id in touchIds.keys.toList()) touchUp(P(id, touchPos[id]?.first ?: 0f, touchPos[id]?.second ?: 0f), CANCEL)
         timers.cancel(longTimer)
         timers.cancel(downTimer)
         pendingDown = false
         endDrag()
+        lastTapT = -10_000L
         kind = Kind.NONE
     }
 
@@ -509,9 +552,15 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
     }
 
     private fun endDrag() {
+        timers.cancel(dragResumeTimer)
+        dragResumeTimer = null
+        dragResumePending = false
+        resumedDrag = false
         if (dragging) {
-            out.button(LEFT, false)
             dragging = false
+            lastTapT = -10_000L
+            out.button(LEFT, false)
+            out.pressingChanged()
         }
     }
 
@@ -562,6 +611,8 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
         const val TAP_MS = 350L
         const val DOUBLE_TAP_MS = 300L
         const val TWO_TAP_MS = 300L
+        const val TWO_TAP_JOIN_MS = 150L
+        const val DRAG_RESUME_MS = 500L
         const val THREE_TAP_MS = 400L
         const val PASSTHROUGH_DELAY_MS = 60L
 

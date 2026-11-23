@@ -345,6 +345,7 @@ final class SessionController: UIViewController, Gestures.Out, UIPointerInteract
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        gestures.cancel()
         game.releaseAll()
         releaseKeys()
     }
@@ -693,6 +694,7 @@ final class SessionController: UIViewController, Gestures.Out, UIPointerInteract
     func button(_ b: String, _ down: Bool) { session.input([Input.button(b, down)]) }
     func button(_ b: String, _ down: Bool, click: Bool) { session.input([Input.button(b, down, click: click)]) }
     func click(_ b: String) { session.input(Input.click(b)) }
+    func pressingChanged() { cursorChanged(session.cursor) }
     func wheel(_ dx: Int, _ dy: Int) { session.input([Input.wheel(dx, dy)]) }
 
     func zoom(_ factor: CGFloat, _ focus: CGPoint) {
@@ -856,6 +858,7 @@ final class SessionController: UIViewController, Gestures.Out, UIPointerInteract
     }
 
     @objc private func resignActive() {
+        gestures.cancel()
         game.releaseAll()
         releaseKeys()
         session.input([Input.releaseAll()])
@@ -1035,6 +1038,7 @@ final class SessionController: UIViewController, Gestures.Out, UIPointerInteract
     }
 
     private func close() {
+        gestures.cancel()
         game.releaseAll()
         releaseKeys()
         app.closeSession()

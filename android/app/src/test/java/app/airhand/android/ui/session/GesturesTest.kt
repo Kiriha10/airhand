@@ -9,6 +9,7 @@ import org.junit.Test
 /** 手势：触控板 / 触屏 / 直通三种方式下，手指动作变成什么鼠标操作 */
 class GesturesTest {
     private val log = ArrayList<String>()
+    private val pressingStates = ArrayList<Boolean>()
     private val timers = FakeTimers()
     private lateinit var g: Gestures
 
@@ -29,6 +30,7 @@ class GesturesTest {
         }
 
         override fun click(button: String) { log += "$button click" }
+        override fun pressingChanged() { pressingStates += g.pressing }
 
         override fun wheel(dx: Int, dy: Int) {
             log += "wheel $dx $dy"
@@ -146,12 +148,13 @@ class GesturesTest {
     }
 
     @Test
-    fun trackpadLongPressIsARightClick() {
+    fun trackpadLongPressHoldsLeftForDragging() {
         g.mode = Gestures.Mode.TRACKPAD
         g.down(p(100f, 100f), 0)
         timers.advance(Gestures.LONG_PRESS_MS + 10)
         g.up(p(100f, 100f), 600)
-        assertEquals(listOf("right click"), buttons())
+        assertEquals(listOf("left down", "left up"), buttons())
+        assertEquals(listOf(true, false), pressingStates)
     }
 
     @Test
@@ -163,6 +166,7 @@ class GesturesTest {
         g.move(listOf(p(160f, 101f)), 200)
         g.move(listOf(p(220f, 101f)), 250)
         g.up(p(220f, 101f), 300)
+        timers.advance(Gestures.DRAG_RESUME_MS)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
         // 拖动期间指针在动
         val i = log.indexOfLast { it == "left down" }
@@ -407,5 +411,215 @@ class GesturesTest {
         assertEquals(0.7f, Gestures.accel(0f), 0.001f)
         assertEquals(2.4f, Gestures.accel(100f), 0.001f)
         assertTrue(Gestures.accel(1f) > 1f)
+    }
+
+    private fun at(t: Long, action: () -> Unit = {}) {
+        timers.advance(t - timers.now)
+        action()
+    }
+
+    private fun beginTrackpadDrag() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(150) { g.down(p(101f, 100f), 150) }
+        at(200) { g.move(listOf(p(160f, 100f)), 200) }
+    }
+
+    @Test
+    fun delayedSecondPressFallsBackToLeftDrag() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(380) { g.down(p(100f, 100f), 380) } // Exactly 300 ms after the tap.
+        at(830)
+        assertEquals(listOf("left click", "left down"), buttons())
+        at(880) { g.move(listOf(p(160f, 100f)), 880) }
+        at(900) { g.up(p(160f, 100f), 900) }
+        at(1400)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertEquals(listOf(true, false), pressingStates)
+    }
+
+    @Test
+    fun quickTapDragUsesPointerPositionNotFingerLandingPosition() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(200) { g.down(p(800f, 400f), 200) }
+        at(240) { g.move(listOf(p(850f, 400f)), 240) }
+        at(260) { g.up(p(850f, 400f), 260) }
+        at(760)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun movingThePointerAfterATapDoesNotStartAnUnwantedDrag() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        g.setCursor(0.25f, 0.25f)
+        at(200) { g.down(p(100f, 100f), 200) }
+        at(240) { g.move(listOf(p(160f, 100f)), 240) }
+        at(260) { g.up(p(160f, 100f), 260) }
+        at(1000)
+        assertEquals(listOf("left click"), buttons())
+    }
+
+    @Test
+    fun a350msTapIsNotSilentlyDiscarded() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(350) { g.up(p(100f, 100f), 350) }
+        assertEquals(listOf("left click"), buttons())
+        at(430) { g.down(p(800f, 400f), 430) }
+        at(500) { g.move(listOf(p(850f, 400f)), 500) }
+        g.cancel()
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun holdingTheQuickSecondPressStartsOneLeftPress() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(200) { g.down(p(100f, 100f), 200) }
+        at(650)
+        assertTrue(g.pressing)
+        at(700) { g.move(listOf(p(160f, 100f)), 700) }
+        at(720) { g.up(p(160f, 100f), 720) }
+        at(1220)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun longPressStartsLeftDragDespiteSmallInitialMovement() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(150) { g.move(listOf(p(103f, 100f)), 150) }
+        at(300) { g.move(listOf(p(107f, 100f)), 300) }
+        at(449) { g.move(listOf(p(109f, 100f)), 449) }
+        at(450)
+        assertEquals(listOf("left down"), buttons())
+        assertTrue(g.pressing)
+        assertEquals(listOf(true), pressingStates)
+        val x = g.cursorX
+        at(451) { g.move(listOf(p(108f, 100f)), 451) }
+        assertTrue(g.cursorX != x)
+        at(460) { g.up(p(108f, 100f), 460) }
+        assertEquals(listOf("left down", "left up"), buttons())
+    }
+
+    @Test
+    fun liftingAfterADragKeepsTheButtonOnlyForTheResumeWindow() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        at(799)
+        assertTrue(g.pressing)
+        assertEquals(listOf("left click", "left down"), buttons())
+        at(800)
+        assertFalse(g.pressing)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertEquals(listOf(true, false), pressingStates)
+    }
+
+    @Test
+    fun regrippingResumesWithoutASecondPressOrPointerJump() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        val x = g.cursorX
+        at(500) { g.down(p(900f, 100f), 500) }
+        assertEquals(x, g.cursorX, 0.00001f)
+        at(520) { g.move(listOf(p(920f, 100f)), 520) }
+        assertTrue(g.cursorX > x && g.cursorX - x < 0.1f)
+        at(540) { g.up(p(920f, 100f), 540) }
+        at(800) // The old resume timer must have been cancelled.
+        assertTrue(g.pressing)
+        at(1040)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertEquals(listOf(true, false), pressingStates)
+    }
+
+    @Test
+    fun tappingDuringTheResumeWindowDropsWithoutAnotherClick() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        at(450) { g.down(p(900f, 100f), 450) }
+        at(470) { g.up(p(900f, 100f), 470) }
+        assertFalse(g.pressing)
+        at(1200)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun cancelReleasesAPendingDragImmediately() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        at(350) { g.cancel() }
+        assertFalse(g.pressing)
+        at(1200)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertEquals(listOf(true, false), pressingStates)
+    }
+
+    @Test
+    fun changingModeReleasesAPendingDragImmediately() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        at(350) { g.mode = Gestures.Mode.TOUCH }
+        assertFalse(g.pressing)
+        at(1200)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun aNewDownWithoutAnUpReleasesTheOldButton() {
+        beginTrackpadDrag()
+        at(250) { g.down(p(800f, 400f), 250) }
+        assertFalse(g.pressing)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        at(400) { g.up(p(800f, 400f), 400) }
+        at(1200)
+        assertEquals(listOf("left click", "left down", "left up", "left click"), buttons())
+    }
+
+    @Test
+    fun aLateSecondFingerCannotTurnAPendingDragIntoRightClick() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(200) { g.down(p(100f, 100f), 200) }
+        at(400) { g.pointerDown(p(200f, 100f, 1), listOf(p(100f, 100f), p(200f, 100f, 1)), 400) }
+        at(500) { g.pointerUp(p(200f, 100f, 1), 1, 500) }
+        at(520) { g.up(p(100f, 100f), 520) }
+        at(1200)
+        assertEquals(listOf("left click"), buttons())
+    }
+
+    @Test
+    fun anExtraFingerAfterAStationaryLongPressReleasesLeftWithoutRight() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(450)
+        at(600) { g.pointerDown(p(200f, 100f, 1), listOf(p(100f, 100f), p(200f, 100f, 1)), 600) }
+        at(700) { g.pointerUp(p(200f, 100f, 1), 1, 700) }
+        at(720) { g.up(p(100f, 100f), 720) }
+        assertEquals(listOf("left down", "left up"), buttons())
+    }
+
+    @Test
+    fun aNormalTwoFingerTapAfterALeftClickStillRightClicks() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(300) { g.down(p(100f, 100f), 300) }
+        at(310) { g.pointerDown(p(200f, 100f, 1), listOf(p(100f, 100f), p(200f, 100f, 1)), 310) }
+        at(400) { g.pointerUp(p(200f, 100f, 1), 1, 400) }
+        at(410) { g.up(p(100f, 100f), 410) }
+        assertEquals(listOf("left click", "right click"), buttons())
+    }
+
+    @Test
+    fun aGameLookSwipeAfterATapNeverHoldsLeft() {
+        g.relative = true
+        g.lookGain = 1f
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(80) { g.up(p(100f, 100f), 80) }
+        at(150) { g.down(p(100f, 100f), 150) }
+        at(200) { g.move(listOf(p(160f, 100f)), 200) }
+        at(250) { g.up(p(160f, 100f), 250) }
+        at(1200)
+        assertEquals(listOf("left click"), buttons())
+        assertFalse(g.pressing)
     }
 }

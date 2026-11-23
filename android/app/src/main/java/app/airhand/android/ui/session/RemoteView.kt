@@ -114,6 +114,7 @@ class RemoteView(context: Context, private val host: Host) : FrameLayout(context
 
         override fun button(button: String, down: Boolean, click: Boolean) = host.onInput(listOf(Input.button(button, down, click)), true)
         override fun click(button: String) = host.onInput(Input.click(button), true)
+        override fun pressingChanged() = updateRelative()
         override fun wheel(dx: Int, dy: Int) = host.onInput(listOf(Input.wheel(dx, dy)), false)
         override fun zoom(factor: Float, fx: Float, fy: Float) = zoomBy(factor, fx, fy)
         override fun pan(dx: Float, dy: Float) = panBy(dx, dy)
@@ -534,9 +535,7 @@ class RemoteView(context: Context, private val host: Host) : FrameLayout(context
             return true
         }
         if (e.isFromSource(InputDevice.SOURCE_MOUSE)) return mouse(e)
-        val wasPressing = gestures.pressing
         if (game.layout != null) split(e) else touch(e)
-        if (gestures.pressing != wasPressing) updateRelative()
         return true
     }
 
@@ -774,7 +773,18 @@ class RemoteView(context: Context, private val host: Host) : FrameLayout(context
         updateCapture()
         // 菜单、通知栏、切到后台：游戏按键按着的都松开（手指的抬起不一定会送到这里），切换着的也松开，
         // 不然角色会一直走下去
-        if (!hasWindowFocus) game.releaseAll()
+        if (!hasWindowFocus) {
+            gestures.cancel()
+            freeIds.clear()
+            game.releaseAll()
+        }
+    }
+
+    override fun onDetachedFromWindow() {
+        gestures.cancel()
+        freeIds.clear()
+        game.releaseAll()
+        super.onDetachedFromWindow()
     }
 
     fun hideKeyboard() {

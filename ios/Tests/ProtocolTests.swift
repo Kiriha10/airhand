@@ -242,11 +242,15 @@ final class CodecTests: XCTestCase {
 final class GestureTests: XCTestCase {
     final class Out: Gestures.Out {
         var events: [String] = []
+        var onButton: (String, Bool) -> Void = { _, _ in }
         func toRemote(_ p: CGPoint) -> CGPoint? { CGPoint(x: p.x / 1000, y: p.y / 500) }
         func contentSize() -> CGSize { CGSize(width: 1000, height: 500) }
         func move(_ nx: CGFloat, _ ny: CGFloat) { events.append("move") }
         func delta(_ nx: CGFloat, _ ny: CGFloat) { events.append("delta") }
-        func button(_ b: String, _ down: Bool, click: Bool) { events.append("\(b)\(click ? "click" : "")\(down ? "↓" : "↑")") }
+        func button(_ b: String, _ down: Bool, click: Bool) {
+            events.append("\(b)\(click ? "click" : "")\(down ? "↓" : "↑")")
+            onButton(b, down)
+        }
         func click(_ b: String) { events.append("\(b)click") }
         func wheel(_ dx: Int, _ dy: Int) { events.append("wheel") }
         func zoom(_ factor: CGFloat, _ focus: CGPoint) { events.append("zoom") }
@@ -329,5 +333,94 @@ final class GestureTests: XCTestCase {
         g.move([Gestures.P(id: 1, x: 120, y: 100)], 16)
         g.up(Gestures.P(id: 1, x: 120, y: 100), 32)
         XCTAssertEqual(o.events, ["touch-down", "touch-move", "touch-up"])
+    }
+
+    func testTrackpadLongPressBeginsLeftDrag() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        let down = expectation(description: "long press holds left")
+        o.onButton = { b, held in if b == "left" && held { down.fulfill() } }
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        wait(for: [down], timeout: 1.5)
+        XCTAssertTrue(g.pressing)
+        g.up(.init(id: 1, x: 100, y: 100), 500)
+        XCTAssertFalse(g.pressing)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["left↓", "left↑"])
+    }
+
+    func testTrackpadLateSecondPressDragsInsteadOfRightClicking() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 80)
+        let down = expectation(description: "late second press holds left")
+        o.onButton = { b, held in if b == "left" && held { down.fulfill() } }
+        g.down(.init(id: 1, x: 100, y: 100), 380)
+        wait(for: [down], timeout: 1.5)
+        let up = expectation(description: "resume timeout releases left")
+        o.onButton = { b, held in if b == "left" && !held { up.fulfill() } }
+        g.move([.init(id: 1, x: 160, y: 100)], 880)
+        g.up(.init(id: 1, x: 160, y: 100), 900)
+        XCTAssertTrue(g.pressing)
+        wait(for: [up], timeout: 1.5)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick", "left↓", "left↑"])
+    }
+
+    func testTrackpadQuickDragAllowsAnotherFingerLandingPosition() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 80)
+        g.down(.init(id: 1, x: 800, y: 400), 200)
+        g.move([.init(id: 1, x: 850, y: 400)], 240)
+        g.cancel()
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick", "left↓", "left↑"])
+    }
+
+    func testTrackpad350msTapIsAccepted() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 350)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick"])
+    }
+
+    func testTrackpadRegripKeepsLeftAndTapDrops() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 80)
+        g.down(.init(id: 1, x: 101, y: 100), 150)
+        g.move([.init(id: 1, x: 160, y: 100)], 200)
+        g.up(.init(id: 1, x: 160, y: 100), 300)
+        XCTAssertTrue(g.pressing)
+        let x = g.cursorX
+        g.down(.init(id: 1, x: 900, y: 100), 500)
+        XCTAssertEqual(g.cursorX, x)
+        g.move([.init(id: 1, x: 920, y: 100)], 520)
+        XCTAssertGreaterThan(g.cursorX, x)
+        XCTAssertLessThan(g.cursorX - x, 0.1)
+        g.up(.init(id: 1, x: 920, y: 100), 540)
+        g.down(.init(id: 1, x: 800, y: 100), 600)
+        g.up(.init(id: 1, x: 800, y: 100), 620)
+        XCTAssertFalse(g.pressing)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick", "left↓", "left↑"])
+    }
+
+    func testChangingModeCancelsResumeWithoutLateRelease() {
+        let o = Out(), g = Gestures()
+        g.out = o
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 80)
+        g.down(.init(id: 1, x: 101, y: 100), 150)
+        g.move([.init(id: 1, x: 160, y: 100)], 200)
+        g.up(.init(id: 1, x: 160, y: 100), 300)
+        g.mode = .touch
+        XCTAssertFalse(g.pressing)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick", "left↓", "left↑"])
+        let late = expectation(description: "no stale resume callback")
+        late.isInverted = true
+        o.onButton = { _, _ in late.fulfill() }
+        wait(for: [late], timeout: 0.65)
     }
 }
