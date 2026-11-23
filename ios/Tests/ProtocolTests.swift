@@ -81,7 +81,7 @@ final class ProtocolTests: XCTestCase {
         let mine: [JSON] = [
             Input.move(0.5, 0.25), Input.delta(-3, 7), Input.button("right", true), Input.wheel(0, -120), Input.key("KeyA", false),
             Input.text("你好"), Input.releaseAll(), Input.touch(1, "down", 0.25, 0.75), Input.system(.back),
-        ]
+        ] + Input.click("left")
         let theirs = Self.fixture["input"] as! [Any]
         XCTAssertEqual(mine.count, theirs.count)
         for (a, b) in zip(mine, theirs) { XCTAssertTrue(same(a, b), "\(a) != \(b)") }
@@ -246,7 +246,8 @@ final class GestureTests: XCTestCase {
         func contentSize() -> CGSize { CGSize(width: 1000, height: 500) }
         func move(_ nx: CGFloat, _ ny: CGFloat) { events.append("move") }
         func delta(_ nx: CGFloat, _ ny: CGFloat) { events.append("delta") }
-        func button(_ b: String, _ down: Bool) { events.append("\(b)\(down ? "↓" : "↑")") }
+        func button(_ b: String, _ down: Bool, click: Bool) { events.append("\(b)\(click ? "click" : "")\(down ? "↓" : "↑")") }
+        func click(_ b: String) { events.append("\(b)click") }
         func wheel(_ dx: Int, _ dy: Int) { events.append("wheel") }
         func zoom(_ factor: CGFloat, _ focus: CGPoint) { events.append("zoom") }
         func pan(_ dx: CGFloat, _ dy: CGFloat) {}
@@ -263,7 +264,7 @@ final class GestureTests: XCTestCase {
         g.out = o
         g.down(.init(id: 1, x: 100, y: 100), 0)
         g.up(.init(id: 1, x: 100, y: 100), 80)
-        XCTAssertEqual(o.events.filter { $0 != "move" }, ["left↓", "left↑"])
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick"])
     }
 
     func testTwoFingerTapIsRightClick() {
@@ -275,7 +276,7 @@ final class GestureTests: XCTestCase {
         g.pointerDown(b, [a, b], 10)
         g.pointerUp(b, remaining: 1, 80)
         g.up(a, 90)
-        XCTAssertEqual(o.events.filter { $0 != "move" }, ["right↓", "right↑"])
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["rightclick"])
     }
 
     func testTwoFingerDragScrolls() {
@@ -291,6 +292,31 @@ final class GestureTests: XCTestCase {
         }
         XCTAssertTrue(o.events.contains("wheel"))
         XCTAssertFalse(o.events.contains("left↓"))
+    }
+
+    func testTouchTapIsSyntheticButDragUsesIndependentButtons() {
+        let o = Out()
+        let g = Gestures()
+        g.out = o
+        g.mode = .touch
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 50)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick"])
+        o.events.removeAll()
+        g.down(.init(id: 1, x: 100, y: 100), 1000)
+        g.move([.init(id: 1, x: 160, y: 100)], 1050)
+        g.up(.init(id: 1, x: 160, y: 100), 1100)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["left↓", "left↑"])
+    }
+
+    func testPassthroughQuickTapMarksBothButtons() {
+        let o = Out()
+        let g = Gestures()
+        g.out = o
+        g.mode = .passthrough
+        g.down(.init(id: 1, x: 100, y: 100), 0)
+        g.up(.init(id: 1, x: 100, y: 100), 30)
+        XCTAssertEqual(o.events.filter { $0 != "move" }, ["leftclick↓", "leftclick↑"])
     }
 
     func testMultitouchPassesFingers() {

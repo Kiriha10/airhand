@@ -852,6 +852,11 @@ pub enum InputEvent {
         button: MouseButton,
         #[n(1)]
         down: bool,
+        /// 手势合成点击的 DOWN、UP 都带此标记：被控端保证按住和两次点击间的释放时间。
+        /// 真实鼠标、拖动和游戏按键不带。旧版本忽略这个新增字段，仍按普通按钮事件处理。
+        #[cbor(n(2), default, skip_if = "is_false")]
+        #[serde(default, skip_serializing_if = "is_false")]
+        click: bool,
     },
     /// 滚轮，120 = 一格
     #[n(3)]
@@ -945,6 +950,63 @@ mod tests {
     use super::*;
 
     #[test]
+    fn synthetic_buttons_roundtrip_without_changing_legacy_buttons() {
+        let legacy = InputEvent::MouseButton {
+            button: MouseButton::Left,
+            down: true,
+            click: false,
+        };
+        // 没有标记的事件保持原有 CBOR 形状，新版也能读旧版发送的事件。
+        let old_bytes = [0x82, 0x02, 0x82, 0x00, 0xf5];
+        assert_eq!(minicbor::to_vec(&legacy).unwrap(), old_bytes);
+        assert_eq!(minicbor::decode::<InputEvent>(&old_bytes).unwrap(), legacy);
+        let plain = serde_json::json!({ "type": "mouseButton", "button": "left", "down": true });
+        assert_eq!(serde_json::to_value(&legacy).unwrap(), plain);
+        assert_eq!(serde_json::from_value::<InputEvent>(plain).unwrap(), legacy);
+        for down in [true, false] {
+            let event = InputEvent::MouseButton {
+                button: MouseButton::Right,
+                down,
+                click: true,
+            };
+            let bytes = minicbor::to_vec(&event).unwrap();
+            assert_eq!(minicbor::decode::<InputEvent>(&bytes).unwrap(), event);
+            let json = serde_json::to_value(&event).unwrap();
+            assert_eq!(json["click"], true);
+            assert_eq!(serde_json::from_value::<InputEvent>(json).unwrap(), event);
+        }
+    }
+
+    #[test]
+    fn an_old_peer_still_reads_the_buttons_in_a_synthetic_click() {
+        #[derive(Decode, Debug, PartialEq)]
+        enum OldInput {
+            #[n(2)]
+            MouseButton {
+                #[n(0)]
+                button: MouseButton,
+                #[n(1)]
+                down: bool,
+            },
+        }
+        for down in [true, false] {
+            let bytes = minicbor::to_vec(InputEvent::MouseButton {
+                button: MouseButton::Right,
+                down,
+                click: true,
+            })
+            .unwrap();
+            assert_eq!(
+                minicbor::decode::<OldInput>(&bytes).unwrap(),
+                OldInput::MouseButton {
+                    button: MouseButton::Right,
+                    down
+                }
+            );
+        }
+    }
+
+    #[test]
     fn coalesce_keeps_order_and_sums_deltas() {
         let mv = |x, y, stream| InputEvent::MouseMove { x, y, stream };
         let mut v = vec![
@@ -954,12 +1016,14 @@ mod tests {
             InputEvent::MouseButton {
                 button: MouseButton::Right,
                 down: true,
+                click: false,
             },
             InputEvent::MouseDelta { dx: 3, dy: -1 },
             InputEvent::MouseDelta { dx: 4, dy: -2 },
             InputEvent::MouseButton {
                 button: MouseButton::Right,
                 down: false,
+                click: false,
             },
             InputEvent::MouseDelta { dx: 1, dy: 1 },
         ];
@@ -970,12 +1034,14 @@ mod tests {
                 mv(0.2, 0.3, 1),
                 InputEvent::MouseButton {
                     button: MouseButton::Right,
-                    down: true
+                    down: true,
+                    click: false,
                 },
                 InputEvent::MouseDelta { dx: 7, dy: -3 },
                 InputEvent::MouseButton {
                     button: MouseButton::Right,
-                    down: false
+                    down: false,
+                    click: false,
                 },
                 InputEvent::MouseDelta { dx: 1, dy: 1 },
             ]
@@ -1113,6 +1179,7 @@ mod tests {
         let e = InputEvent::MouseButton {
             button: MouseButton::Unknown(12),
             down: true,
+            click: false,
         };
         let back: InputEvent = minicbor::decode(&minicbor::to_vec(&e).unwrap()).unwrap();
         assert_eq!(back, e);
@@ -1156,6 +1223,7 @@ mod tests {
             InputEvent::MouseButton {
                 button: MouseButton::Left,
                 down: true,
+                click: false,
             },
             InputEvent::Touch {
                 id: 1,

@@ -24,9 +24,11 @@ class GesturesTest {
             log += "delta %.3f %.3f".format(nx, ny)
         }
 
-        override fun button(button: String, down: Boolean) {
-            log += "$button ${if (down) "down" else "up"}"
+        override fun button(button: String, down: Boolean, click: Boolean) {
+            log += "$button ${if (click) "click " else ""}${if (down) "down" else "up"}"
         }
+
+        override fun click(button: String) { log += "$button click" }
 
         override fun wheel(dx: Int, dy: Int) {
             log += "wheel $dx $dy"
@@ -88,7 +90,7 @@ class GesturesTest {
         g.setCursor(0.25f, 0.5f)
         g.down(p(800f, 400f), 0)
         g.up(p(800f, 400f), 80)
-        assertEquals(listOf("move 0.25 0.50", "left down", "left up"), log)
+        assertEquals(listOf("move 0.25 0.50", "left click"), log)
     }
 
     @Test
@@ -111,7 +113,7 @@ class GesturesTest {
         // 点一下：不先把光标挪到本机指针的位置（游戏里视角会跳）
         g.down(p(800f, 400f), 0)
         g.up(p(800f, 400f), 80)
-        assertEquals(listOf("left down", "left up"), log)
+        assertEquals(listOf("left click"), log)
         log.clear()
         // 滑动：发移动量（画面的几分之几），本机画的指针不动
         g.down(p(100f, 100f), 1000)
@@ -149,7 +151,7 @@ class GesturesTest {
         g.down(p(100f, 100f), 0)
         timers.advance(Gestures.LONG_PRESS_MS + 10)
         g.up(p(100f, 100f), 600)
-        assertEquals(listOf("right down", "right up"), buttons())
+        assertEquals(listOf("right click"), buttons())
     }
 
     @Test
@@ -161,7 +163,7 @@ class GesturesTest {
         g.move(listOf(p(160f, 101f)), 200)
         g.move(listOf(p(220f, 101f)), 250)
         g.up(p(220f, 101f), 300)
-        assertEquals(listOf("left down", "left up", "left down", "left up"), buttons())
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
         // 拖动期间指针在动
         val i = log.indexOfLast { it == "left down" }
         assertTrue(log.subList(i, log.size).any { it.startsWith("move") })
@@ -174,7 +176,7 @@ class GesturesTest {
         g.pointerDown(p(200f, 100f, 1), listOf(p(100f, 100f), p(200f, 100f, 1)), 20)
         g.pointerUp(p(0f, 0f, 1), 1, 120)
         g.up(p(100f, 100f), 130)
-        assertEquals(listOf("right down", "right up"), buttons())
+        assertEquals(listOf("right click"), buttons())
     }
 
     @Test
@@ -209,7 +211,7 @@ class GesturesTest {
         g.mode = Gestures.Mode.TOUCH
         g.down(p(500f, 250f), 0)
         g.up(p(500f, 250f), 60)
-        assertEquals(listOf("move 0.50 0.50", "move 0.50 0.50", "left down", "left up"), log)
+        assertEquals(listOf("move 0.50 0.50", "move 0.50 0.50", "left click"), log)
     }
 
     @Test
@@ -218,7 +220,7 @@ class GesturesTest {
         g.down(p(250f, 125f), 0)
         timers.advance(Gestures.LONG_PRESS_MS + 10)
         g.up(p(250f, 125f), 600)
-        assertEquals(listOf("right down", "right up"), buttons())
+        assertEquals(listOf("right click"), buttons())
         assertEquals(0.25f, g.cursorX, 0.001f)
     }
 
@@ -239,7 +241,7 @@ class GesturesTest {
         g.mode = Gestures.Mode.PASSTHROUGH
         g.down(p(100f, 100f), 0)
         g.up(p(100f, 100f), 30)
-        assertEquals(listOf("left down", "left up"), buttons())
+        assertEquals(listOf("left click down", "left click up"), buttons())
     }
 
     @Test
@@ -357,7 +359,7 @@ class GesturesTest {
         g.lookGain = 1f
         g.down(p(500f, 250f), 0)
         g.up(p(500f, 250f), 80)
-        assertEquals(listOf("left down", "left up"), log)
+        assertEquals(listOf("left click"), log)
     }
 
     @Test

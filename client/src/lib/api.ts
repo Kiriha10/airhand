@@ -304,7 +304,7 @@ export type InputEvent =
   | { type: "mouseMove"; x: number; y: number; stream?: number }
   /** 相对移动（被控端光标隐藏时，例如游戏里转视角）：鼠标的原始计数，约等于被控端的像素 */
   | { type: "mouseDelta"; dx: number; dy: number }
-  | { type: "mouseButton"; button: MouseButton; down: boolean }
+  | { type: "mouseButton"; button: MouseButton; down: boolean; click?: boolean }
   | { type: "wheel"; dx: number; dy: number }
   | { type: "key"; code: string; down: boolean }
   | { type: "text"; text: string }

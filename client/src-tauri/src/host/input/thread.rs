@@ -12,14 +12,16 @@
 //! * 会话结束（[`InjectorThread`] 被丢掉）时排着的不再注入，松开所有按键后线程结束。很长的一段文字分成小段交给
 //!   注入器（[`TEXT_PIECE`]），每段之间看一眼会话是不是结束了：本机用户断开控制端之后，最多再输入一小段。
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use airhand_proto::session::{DisplayInfo, InputEvent};
 use tracing::warn;
 
 use super::Injector;
+use super::click::ClickTiming;
 
 /// 排着还没注入完的输入最多占这么多字节（见 [`cost`]）。平时线程跟得上，排着的不到一批；
 /// 只有文字输得慢的时候才会排起来
@@ -62,6 +64,17 @@ struct Shared {
     queued: AtomicUsize,
     /// 会话结束了：排着的不再注入
     closed: AtomicBool,
+    /// 合成点击等待期间也能立即响应会话结束。
+    wake_lock: Mutex<()>,
+    wake: Condvar,
+}
+
+impl Shared {
+    fn close(&self) {
+        let _guard = self.wake_lock.lock().unwrap_or_else(|e| e.into_inner());
+        self.closed.store(true, Ordering::Release);
+        self.wake.notify_all();
+    }
 }
 
 /// 一个会话的注入线程（见模块说明）。丢掉时松开所有按键
@@ -84,6 +97,8 @@ impl InjectorThread {
         let shared = Arc::new(Shared {
             queued: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
+            wake_lock: Mutex::new(()),
+            wake: Condvar::new(),
         });
         let sh = shared.clone();
         let spawned = std::thread::Builder::new()
@@ -137,7 +152,7 @@ impl InjectorThread {
 
     /// 马上取消尚未注入的事件，并唤醒空闲线程。停止编码器之前就应调用。
     pub fn cancel(&mut self) {
-        self.shared.closed.store(true, Ordering::Release);
+        self.shared.close();
         self.tx = None;
     }
 
@@ -154,7 +169,7 @@ impl InjectorThread {
 impl Drop for InjectorThread {
     fn drop(&mut self) {
         // 排着的不再注入。发送端随之丢掉，线程醒来后松开所有按键、结束（不在这里等它：这里是会话的任务）
-        self.shared.closed.store(true, Ordering::Release);
+        self.shared.close();
     }
 }
 
@@ -175,6 +190,7 @@ fn cost(events: &[InputEvent]) -> usize {
 
 /// 注入线程：按顺序注入，直到会话结束
 fn run<I: Inject>(mut injector: I, jobs: mpsc::Receiver<Job>, shared: &Shared) {
+    let mut clicks = ClickTiming::default();
     while let Ok(job) = jobs.recv() {
         if shared.closed.load(Ordering::Acquire) {
             break;
@@ -185,10 +201,13 @@ fn run<I: Inject>(mut injector: I, jobs: mpsc::Receiver<Job>, shared: &Shared) {
                 displays,
                 cost,
             } => {
-                inject(&mut injector, &events, &displays, shared);
+                inject(&mut injector, &events, &displays, shared, &mut clicks);
                 shared.queued.fetch_sub(cost, Ordering::AcqRel);
             }
-            Job::ReleaseAll => injector.release_all(),
+            Job::ReleaseAll => {
+                injector.release_all();
+                clicks.clear();
+            }
         }
     }
     injector.release_all();
@@ -210,14 +229,22 @@ fn inject<I: Inject>(
     events: &[InputEvent],
     displays: &[DisplayInfo],
     shared: &Shared,
+    clicks: &mut ClickTiming,
 ) {
     for event in events {
         if shared.closed.load(Ordering::Acquire) {
             return;
         }
         let display = display_for(event, displays);
+        let Some(delay) = clicks.delay(event, Instant::now()) else {
+            continue;
+        };
+        if !wait(delay, shared) {
+            return;
+        }
         let InputEvent::Text { text } = event else {
             injector.handle(std::slice::from_ref(event), display);
+            clicks.injected(event, Instant::now());
             continue;
         };
         let mut rest = text.as_str();
@@ -238,6 +265,18 @@ fn inject<I: Inject>(
             rest = tail;
         }
     }
+}
+
+/// 等待只占用这个会话的注入线程；Windows 共用的桌面注入线程继续服务其他会话。
+fn wait(delay: Duration, shared: &Shared) -> bool {
+    if !delay.is_zero() {
+        let guard = shared.wake_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let (_guard, _) = shared
+            .wake
+            .wait_timeout_while(guard, delay, |_| !shared.closed.load(Ordering::Acquire))
+            .unwrap_or_else(|e| e.into_inner());
+    }
+    !shared.closed.load(Ordering::Acquire)
 }
 
 #[cfg(test)]
@@ -335,6 +374,68 @@ mod tests {
             code: code.into(),
             down,
         }
+    }
+
+    fn click_button(down: bool) -> InputEvent {
+        InputEvent::MouseButton {
+            button: airhand_proto::session::MouseButton::Left,
+            down,
+            click: true,
+        }
+    }
+
+    /// 即使按下、松开同批到达，也要在平台完成按下注入之后保持时间，后续输入不能越过松开。
+    #[test]
+    fn a_click_waits_for_actual_injection_and_keeps_following_input_in_order() {
+        let (mut thread, probe) = start();
+        let down = click_button(true);
+        let up = click_button(false);
+        let next = key("KeyA", true);
+        thread.handle(vec![down.clone(), up.clone(), next.clone()], &[display()]);
+        assert_eq!(probe.next(), Call::Input(vec![down]));
+        let finished_down = Instant::now();
+        probe.permit(1);
+        assert_eq!(probe.next(), Call::Input(vec![up]));
+        assert!(finished_down.elapsed() >= Duration::from_millis(80));
+        assert!(probe.idle());
+        probe.permit(1);
+        assert_eq!(probe.next(), Call::Input(vec![next]));
+        drop(thread);
+        probe.permit(1);
+        assert_eq!(probe.next(), Call::ReleaseAll);
+        assert!(probe.ended());
+    }
+
+    #[test]
+    fn ending_a_session_cancels_the_click_without_a_late_button_up() {
+        let (mut thread, probe) = start();
+        thread.handle(vec![click_button(true), click_button(false)], &[display()]);
+        assert_eq!(probe.next(), Call::Input(vec![click_button(true)]));
+        thread.cancel();
+        probe.permit(1);
+        assert_eq!(probe.next(), Call::ReleaseAll);
+        assert!(probe.ended());
+    }
+
+    #[test]
+    fn closing_the_session_wakes_a_timed_wait() {
+        let shared = Arc::new(Shared {
+            queued: AtomicUsize::new(0),
+            closed: AtomicBool::new(false),
+            wake_lock: Mutex::new(()),
+            wake: Condvar::new(),
+        });
+        let sh = shared.clone();
+        let (ready_tx, ready) = mpsc::channel();
+        let (done_tx, done) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            done_tx.send(wait(Duration::from_secs(5), &sh)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        shared.close();
+        assert!(!done.recv_timeout(Duration::from_secs(1)).unwrap());
+        worker.join().unwrap();
     }
 
     /// 多屏：绝对移动按它说的那一路画面的显示器换算，没有那一路时按第 0 路；别的事件按第 0 路

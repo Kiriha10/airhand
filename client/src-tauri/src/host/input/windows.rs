@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 use std::sync::mpsc;
 
 use airhand_proto::session::{DisplayInfo, InputEvent, MouseButton};
+use tracing::warn;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, KEYEVENTF_UNICODE,
@@ -132,7 +133,7 @@ impl WinInjector {
                 InputEvent::MouseDelta { dx, dy } => {
                     self.batch.push(mouse(MOUSEEVENTF_MOVE, *dx, *dy, 0));
                 }
-                InputEvent::MouseButton { button, down } => {
+                InputEvent::MouseButton { button, down, .. } => {
                     // 不认识的按钮（对方版本新增的）HostStreams 已经滤掉了，这里再防一手
                     if !button.is_known() {
                         continue;
@@ -202,21 +203,41 @@ impl WinInjector {
         if self.batch.is_empty() {
             return;
         }
-        let _ = INJECTOR.send(std::mem::take(&mut self.batch));
+        let (done, completed) = mpsc::channel();
+        if INJECTOR
+            .send(Batch {
+                inputs: std::mem::take(&mut self.batch),
+                done,
+            })
+            .is_ok()
+        {
+            // 合成点击从 SendInput 完成后计时，不能只确认排进了另一层队列。
+            let _ = completed.recv();
+        }
     }
 }
 
+struct Batch {
+    inputs: Vec<INPUT>,
+    done: mpsc::Sender<()>,
+}
+
 /// 注入线程（第一次使用时启动，随进程退出）
-static INJECTOR: LazyLock<mpsc::Sender<Vec<INPUT>>> = LazyLock::new(|| {
-    let (tx, rx) = mpsc::channel::<Vec<INPUT>>();
+static INJECTOR: LazyLock<mpsc::Sender<Batch>> = LazyLock::new(|| {
+    let (tx, rx) = mpsc::channel::<Batch>();
     std::thread::Builder::new()
         .name("airhand-input".into())
         .spawn(move || {
             while let Ok(batch) = rx.recv() {
                 crate::host::desktop::follow();
                 crate::host::dpi_aware(|| unsafe {
-                    SendInput(&batch, std::mem::size_of::<INPUT>() as i32);
+                    let requested = batch.inputs.len() as u32;
+                    let inserted = SendInput(&batch.inputs, std::mem::size_of::<INPUT>() as i32);
+                    if inserted != requested {
+                        warn!(requested, inserted, "SendInput did not inject every event");
+                    }
                 });
+                let _ = batch.done.send(());
             }
         })
         .expect("spawn input thread");

@@ -730,6 +730,7 @@ mod tests {
         let unknown = InputEvent::MouseButton {
             button: MouseButton::Unknown(9),
             down: true,
+            click: false,
         };
         assert_eq!(
             request(ControllerMsg::Input {

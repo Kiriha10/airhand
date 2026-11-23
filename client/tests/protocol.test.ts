@@ -62,12 +62,17 @@ test("输入事件、命令和连接选项的 JSON 形状与 Rust 一致", () =>
   assert.deepEqual(contract.commands, fixture.commands);
   const events = contract.input;
   const commands = contract.commands;
-  const kinds = events.map((e) => e.type);
+  // 同一种事件可以有多个样例（普通按钮与合成点击），仍覆盖每种输入事件。
+  const kinds = [...new Set(events.map((e) => e.type))];
   assert.deepEqual(kinds, ["mouseMove", "mouseDelta", "mouseButton", "wheel", "key", "text", "releaseAll", "touch", "system"]);
   const delta = { type: "mouseDelta", dx: -3, dy: 7 };
   assert.deepEqual(events[1], delta);
   const button = { type: "mouseButton", button: "right", down: true };
   assert.deepEqual(events[2], button);
+  assert.deepEqual(events.filter((e) => e.type === "mouseButton" && "click" in e && e.click), [
+    { type: "mouseButton", button: "left", down: true, click: true },
+    { type: "mouseButton", button: "left", down: false, click: true },
+  ]);
   const cmds = commands.map((c) => c.cmd).sort();
   assert.deepEqual(cmds, [
     "ack",

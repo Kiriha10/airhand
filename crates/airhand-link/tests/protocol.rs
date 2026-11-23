@@ -37,6 +37,7 @@ fn inputs() -> Vec<InputEvent> {
         InputEvent::MouseButton {
             button: MouseButton::Right,
             down: true,
+            click: false,
         },
         InputEvent::Wheel { dx: 0, dy: -120 },
         InputEvent::Key {
@@ -55,6 +56,16 @@ fn inputs() -> Vec<InputEvent> {
         },
         InputEvent::System {
             action: SystemAction::Back,
+        },
+        InputEvent::MouseButton {
+            button: MouseButton::Left,
+            down: true,
+            click: true,
+        },
+        InputEvent::MouseButton {
+            button: MouseButton::Left,
+            down: false,
+            click: true,
         },
     ]
 }

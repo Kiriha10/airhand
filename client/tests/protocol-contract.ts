@@ -157,6 +157,18 @@ export const contract = {
     {
       "action": "back",
       "type": "system"
+    },
+    {
+      "button": "left",
+      "click": true,
+      "down": true,
+      "type": "mouseButton"
+    },
+    {
+      "button": "left",
+      "click": true,
+      "down": false,
+      "type": "mouseButton"
     }
   ]
 } satisfies { input: InputEvent[]; commands: Command[]; connectOptions: ConnectOptions };

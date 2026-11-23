@@ -112,7 +112,8 @@ class RemoteView(context: Context, private val host: Host) : FrameLayout(context
             sendDelta(nx * w, ny * h)
         }
 
-        override fun button(button: String, down: Boolean) = host.onInput(listOf(Input.button(button, down)), true)
+        override fun button(button: String, down: Boolean, click: Boolean) = host.onInput(listOf(Input.button(button, down, click)), true)
+        override fun click(button: String) = host.onInput(Input.click(button), true)
         override fun wheel(dx: Int, dy: Int) = host.onInput(listOf(Input.wheel(dx, dy)), false)
         override fun zoom(factor: Float, fx: Float, fy: Float) = zoomBy(factor, fx, fy)
         override fun pan(dx: Float, dy: Float) = panBy(dx, dy)

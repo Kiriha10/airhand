@@ -691,6 +691,8 @@ final class SessionController: UIViewController, Gestures.Out, UIPointerInteract
     }
 
     func button(_ b: String, _ down: Bool) { session.input([Input.button(b, down)]) }
+    func button(_ b: String, _ down: Bool, click: Bool) { session.input([Input.button(b, down, click: click)]) }
+    func click(_ b: String) { session.input(Input.click(b)) }
     func wheel(_ dx: Int, _ dy: Int) { session.input([Input.wheel(dx, dy)]) }
 
     func zoom(_ factor: CGFloat, _ focus: CGPoint) {

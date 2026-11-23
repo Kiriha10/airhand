@@ -458,6 +458,7 @@ mod tests {
         let click = InputEvent::MouseButton {
             button: MouseButton::Left,
             down: true,
+            click: false,
         };
         tx.send(input(vec![click.clone()])).unwrap();
         tx.send(KEYFRAME).unwrap();
@@ -490,6 +491,7 @@ mod tests {
         let up = InputEvent::MouseButton {
             button: MouseButton::Right,
             down: false,
+            click: false,
         };
         tx.send(input(vec![up.clone()])).unwrap();
         tx.send(input(vec![InputEvent::MouseDelta { dx: 5, dy: 5 }]))

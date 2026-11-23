@@ -303,6 +303,31 @@ mod tests {
         assert!(cfg.link(Arc::new(Queue::new(4))).is_err());
     }
 
+    #[test]
+    fn synthetic_click_metadata_survives_the_mobile_command_wrapper() {
+        use airhand_proto::session::{InputEvent, MouseButton};
+
+        let command = json!({
+            "cmd": "input", "sid": 3,
+            "events": [
+                { "type": "mouseButton", "button": "left", "down": true, "click": true },
+                { "type": "mouseButton", "button": "left", "down": false, "click": true }
+            ]
+        });
+        let Cmd::Session(Command::Input { events, .. }) = serde_json::from_value(command).unwrap()
+        else {
+            panic!("not an input command");
+        };
+        assert_eq!(
+            events,
+            [true, false].map(|down| InputEvent::MouseButton {
+                button: MouseButton::Left,
+                down,
+                click: true,
+            })
+        );
+    }
+
     /// 第一次连上时记下的指纹：Kotlin 传回来的按服务器地址认，新记下的作为事件交给 Kotlin
     #[test]
     fn learned_fingerprint_roundtrip() {

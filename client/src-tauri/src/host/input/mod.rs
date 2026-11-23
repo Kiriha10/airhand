@@ -3,6 +3,7 @@
 //! 注入是同步的，有的还很慢（X11 上输入文字）：会话不直接用 [`Injector`]，而是把输入交给自己的注入线程
 //! （[`InjectorThread`]），`Injector` 在那个线程上创建、使用、释放。
 
+mod click;
 #[cfg(target_os = "linux")]
 mod evdev;
 #[cfg(windows)]
@@ -259,6 +260,7 @@ mod x11_tests {
             &[InputEvent::MouseButton {
                 button: MouseButton::Right,
                 down: true,
+                click: false,
             }],
             &d,
         );
@@ -266,6 +268,7 @@ mod x11_tests {
             &[InputEvent::MouseButton {
                 button: MouseButton::Right,
                 down: false,
+                click: false,
             }],
             &d,
         );

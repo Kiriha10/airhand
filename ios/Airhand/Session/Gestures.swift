@@ -20,7 +20,8 @@ final class Gestures {
         func move(_ nx: CGFloat, _ ny: CGFloat)
         /// 相对移动：移动了画面宽 / 高的多少
         func delta(_ nx: CGFloat, _ ny: CGFloat)
-        func button(_ b: String, _ down: Bool)
+        func button(_ b: String, _ down: Bool, click: Bool)
+        func click(_ b: String)
         func wheel(_ dx: Int, _ dy: Int)
         func zoom(_ factor: CGFloat, _ focus: CGPoint)
         func pan(_ dx: CGFloat, _ dy: CGFloat)
@@ -154,8 +155,7 @@ final class Gestures {
     private func click(_ b: String) {
         guard let out else { return }
         if !relative { out.move(cursorX, cursorY) }
-        out.button(b, true)
-        out.button(b, false)
+        out.click(b)
     }
 
     func pointerDown(_ p: P, _ ps: [P], _ t: Double) {
@@ -362,9 +362,9 @@ final class Gestures {
                     downTimer?.cancel()
                     out.ripple(CGPoint(x: startX, y: startY))
                     if let r = out.toRemote(CGPoint(x: startX, y: startY)) { out.move(r.x, r.y) }
-                    out.button("left", true)
+                    out.button("left", true, click: true)
                     if let r = out.toRemote(p.pt) { out.move(r.x, r.y) }
-                    out.button("left", false)
+                    out.button("left", false, click: true)
                 } else if dragging {
                     if let r = out.toRemote(p.pt) { out.move(r.x, r.y) }
                     out.button("left", false)
@@ -435,4 +435,9 @@ final class Gestures {
         let a = ps[0], b = ps[1]
         return ((a.x + b.x) / 2, (a.y + b.y) / 2, hypot(a.x - b.x, a.y - b.y))
     }
+}
+
+extension Gestures.Out {
+    /// 真实按住和拖动仍使用独立按钮事件。
+    func button(_ b: String, _ down: Bool) { button(b, down, click: false) }
 }

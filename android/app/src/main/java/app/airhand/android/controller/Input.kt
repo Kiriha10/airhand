@@ -24,7 +24,13 @@ object Input {
      */
     fun delta(dx: Int, dy: Int): JSONObject = event("mouseDelta").put("dx", dx).put("dy", dy)
 
-    fun button(button: String, down: Boolean): JSONObject = event("mouseButton").put("button", button).put("down", down)
+    fun button(button: String, down: Boolean, click: Boolean = false): JSONObject =
+        event("mouseButton").put("button", button).put("down", down).apply {
+            if (click) put("click", true)
+        }
+
+    /** 合成点击：两条事件一起发送，由被控端保证按住和释放间隔。 */
+    fun click(button: String): List<JSONObject> = listOf(Input.button(button, true, true), Input.button(button, false, true))
 
     /** 滚轮：120 = 一格，向上 / 向右为正（Windows 的约定） */
     fun wheel(dx: Int, dy: Int): JSONObject =

@@ -115,7 +115,13 @@ enum Input {
     static func move(_ x: Double, _ y: Double) -> JSON { ["type": "mouseMove", "x": min(max(x, 0), 1), "y": min(max(y, 0), 1)] }
     /// 相对移动：约等于被控端的像素
     static func delta(_ dx: Int, _ dy: Int) -> JSON { ["type": "mouseDelta", "dx": dx, "dy": dy] }
-    static func button(_ b: String, _ down: Bool) -> JSON { ["type": "mouseButton", "button": b, "down": down] }
+    static func button(_ b: String, _ down: Bool, click: Bool = false) -> JSON {
+        var event: JSON = ["type": "mouseButton", "button": b, "down": down]
+        if click { event["click"] = true }
+        return event
+    }
+    /// 合成点击：两条事件一起发送，由被控端保证按住和释放间隔。
+    static func click(_ b: String) -> [JSON] { [button(b, true, click: true), button(b, false, click: true)] }
     /// 滚轮：120 = 一格，向上 / 向右为正
     static func wheel(_ dx: Int, _ dy: Int) -> JSON {
         ["type": "wheel", "dx": min(max(dx, -32000), 32000), "dy": min(max(dy, -32000), 32000)]

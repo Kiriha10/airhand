@@ -95,7 +95,7 @@ class ProtocolTest {
             Input.releaseAll(),
             Input.touch(1, Input.DOWN, 0.25f, 0.75f),
             Input.system(SystemAction.BACK),
-        )
+        ) + Input.click(Input.LEFT)
         assertEquals(want.length(), have.size)
         for (i in have.indices) assertSame(want.get(i), have[i])
     }

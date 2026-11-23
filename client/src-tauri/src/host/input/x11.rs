@@ -102,7 +102,7 @@ impl X11Injector {
                     let clamp = |v: i32| v.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
                     c.fake(xproto::MOTION_NOTIFY_EVENT, 1, clamp(*dx), clamp(*dy))?;
                 }
-                InputEvent::MouseButton { button, down } => {
+                InputEvent::MouseButton { button, down, .. } => {
                     // 不认识的按钮（对方版本新增的）HostStreams 已经滤掉了，这里再防一手
                     if !button.is_known() {
                         continue;

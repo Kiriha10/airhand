@@ -96,7 +96,7 @@ impl MacInjector {
                     self.mouse_move(p);
                 }
                 InputEvent::MouseDelta { dx, dy } => self.mouse_delta(*dx, *dy),
-                InputEvent::MouseButton { button, down } => {
+                InputEvent::MouseButton { button, down, .. } => {
                     // 不认识的按钮（对方版本新增的）HostStreams 已经滤掉了，这里再防一手
                     if !button.is_known() {
                         continue;

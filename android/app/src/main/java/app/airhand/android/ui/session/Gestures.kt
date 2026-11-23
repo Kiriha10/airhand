@@ -52,7 +52,8 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
 
         /** 相对移动：移动了画面宽 / 高的多少（不是位置），由接收方换算成被控端的像素 */
         fun delta(nx: Float, ny: Float)
-        fun button(button: String, down: Boolean)
+        fun button(button: String, down: Boolean, click: Boolean = false)
+        fun click(button: String)
         fun wheel(dx: Int, dy: Int)
         fun zoom(factor: Float, fx: Float, fy: Float)
         fun pan(dx: Float, dy: Float)
@@ -231,8 +232,7 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
 
     private fun click(button: String) {
         if (!relative) out.move(cursorX, cursorY)
-        out.button(button, true)
-        out.button(button, false)
+        out.click(button)
     }
 
     /** 又一个手指落下（`p`），`ps` 是现在所有的手指 */
@@ -467,9 +467,9 @@ class Gestures(private val out: Out, private val timers: Timers, private val slo
                         timers.cancel(downTimer)
                         out.ripple(startX, startY)
                         out.toRemote(startX, startY)?.let { out.move(it.first, it.second) }
-                        out.button(LEFT, true)
+                        out.button(LEFT, true, click = true)
                         out.toRemote(p.x, p.y)?.let { out.move(it.first, it.second) }
-                        out.button(LEFT, false)
+                        out.button(LEFT, false, click = true)
                     } else if (dragging) {
                         out.toRemote(p.x, p.y)?.let { out.move(it.first, it.second) }
                         out.button(LEFT, false)

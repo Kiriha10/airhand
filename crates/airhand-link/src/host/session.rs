@@ -588,6 +588,7 @@ mod tests {
         vec![InputEvent::MouseButton {
             button: MouseButton::Left,
             down: true,
+            click: false,
         }]
     }
 
