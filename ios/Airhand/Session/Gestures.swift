@@ -4,7 +4,7 @@ import Foundation
 /// 把手指的动作变成远端的鼠标操作（纯逻辑，和 Android 的 Gestures.kt 是同一套规则）。
 ///
 /// **触控板**（默认用于电脑）：单指滑动移动指针；单击 = 左键，双击 = 双击；长按 = 左键拖动；
-/// 拖动时短暂抬指可换位置，轻点或松手稍等结束。
+/// 拖动时抬指立即释放左键，下一次触摸是独立操作。
 /// 点一下再按住拖动 = 按住左键拖动；双指点击 = 右键；双指拖动 = 滚动（松手后惯性）；双指捏合 = 放大画面。
 /// **触屏**：点哪里就是哪里；长按 = 右键；单指拖动 = 按住左键拖动；双指拖动 = 滚动；双指捏合 = 放大 / 移动画面。
 /// **多点触摸**（对方是手机，能接收触摸）：每个手指原样传过去。
@@ -63,8 +63,6 @@ final class Gestures {
     private var lastX: CGFloat = 0, lastY: CGFloat = 0, lastT: Double = 0
     private var moved = false, longFired = false, dragging = false, looking = false, doubleTapDrag = false
     private var longTimer: DispatchWorkItem?
-    private var dragResumeTimer: DispatchWorkItem?
-    private var dragResumePending = false, resumedDrag = false
     private var pendingDown = false
     private var downTimer: DispatchWorkItem?
     private var twoStartT: Double = 0, twoStartSpan: CGFloat = 0, twoStartCx: CGFloat = 0, twoStartCy: CGFloat = 0
@@ -80,7 +78,7 @@ final class Gestures {
     private var lastTapT: Double = -10_000, lastTapX: CGFloat = 0, lastTapY: CGFloat = 0
 
     static let longPressMs = 450.0, tapMs = 350.0, doubleTapMs = 300.0, twoTapMs = 300.0, threeTapMs = 400.0, passthroughDelayMs = 60.0
-    static let dragResumeMs = 500.0, twoTapJoinMs = 150.0
+    static let twoTapJoinMs = 150.0
     /// 双指滚动：每点多少滚轮单位（120 = 一格，约 13 点一格，和 Android 上约 40 像素一格差不多）
     static let wheelPerPx: CGFloat = 9
     private static let frameMs: CGFloat = 16, flingMin: CGFloat = 0.6, flingStop: CGFloat = 0.05, flingDecay: CGFloat = 0.93
@@ -101,15 +99,9 @@ final class Gestures {
     func down(_ p: P, _ t: Double) {
         stopFling()
         guard let out else { return }
-        let resume = kind == .none && dragResumePending && mode == .trackpad && !turning
         if kind != .none { cancel() }
         longTimer?.cancel(); longTimer = nil
-        if resume {
-            dragResumeTimer?.cancel(); dragResumeTimer = nil
-            dragResumePending = false
-        } else {
-            endDrag()
-        }
+        endDrag()
         if mode == .multitouch {
             kind = .many
             touchIds.removeAll()
@@ -122,12 +114,12 @@ final class Gestures {
         maxFingers = 1
         startX = p.x; startY = p.y; startT = t
         lastX = p.x; lastY = p.y; lastT = t
-        moved = false; longFired = false; looking = false; doubleTapDrag = false; resumedDrag = resume
+        moved = false; longFired = false; looking = false; doubleTapDrag = false
         switch mode {
         case .multitouch: break
         case .trackpad:
             doubleTapDrag = !turning && t - lastTapT < Self.doubleTapMs && cursorX == lastTapX && cursorY == lastTapY
-            if !resume { longTimer = after(Self.longPressMs) { [weak self] in self?.onLongPress() } }
+            longTimer = after(Self.longPressMs) { [weak self] in self?.onLongPress() }
         case .touch:
             if !relative, let r = out.toRemote(p.pt) {
                 setCursor(r.x, r.y)
@@ -264,7 +256,7 @@ final class Gestures {
             }
         }
         lastX = p.x; lastY = p.y; lastT = t
-        if !moved && (resumedDrag || !dragging) && mode != .passthrough { return }
+        if !moved && !dragging && mode != .passthrough { return }
         switch mode {
         case .trackpad:
             let size = out.contentSize()
@@ -370,15 +362,8 @@ final class Gestures {
             switch mode {
             case .trackpad:
                 if dragging {
-                    if moved && !turning {
-                        dragResumePending = true
-                        dragResumeTimer = after(Self.dragResumeMs) { [weak self] in
-                            guard let self, self.dragResumePending else { return }
-                            self.endDrag()
-                        }
-                    } else {
-                        endDrag()
-                    }
+                    // 抬指即放下；不能让后续点按继续拖动或延迟文件夹的放下。
+                    endDrag()
                 } else if !moved && !longFired && (!turning || t - startT < Self.tapMs) {
                     click("left")
                     lastTapT = t; lastTapX = cursorX; lastTapY = cursorY
@@ -438,8 +423,6 @@ final class Gestures {
     }
 
     private func endDrag() {
-        dragResumeTimer?.cancel(); dragResumeTimer = nil
-        dragResumePending = false; resumedDrag = false
         if dragging {
             dragging = false
             lastTapT = -10_000

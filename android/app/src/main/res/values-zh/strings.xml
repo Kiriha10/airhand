@@ -386,7 +386,7 @@
     <string name="g_click_there">在手指处单击</string>
     <string name="g_right_click_there">在手指处右键</string>
     <string name="g_drag">按住左键拖动（选文字、拖窗口）</string>
-    <string name="g_drag_trackpad">按住左键拖动；可短暂抬指换位置，轻点结束拖动</string>
+    <string name="g_drag_trackpad">按住左键拖动；抬指立即放下</string>
     <string name="g_scroll">滚动</string>
     <string name="g_zoom">放大画面（指针会带着画面走）</string>
     <string name="g_zoom_pan">放大 / 移动画面</string>

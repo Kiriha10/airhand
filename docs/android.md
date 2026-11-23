@@ -28,12 +28,14 @@ Two **touch input modes** (two big buttons in the menu switch any time, Settings
 |---|---|---|---|
 | Slide one finger | Move the pointer (precise when slow, accelerated when fast) | Drag with the left button | Every finger is passed through: taps, long presses, swipes, pinch-to-zoom and multi-finger gestures all happen on the remote phone |
 | Tap | Click; tap twice = double-click | Click under the finger | 〃 |
-| Long press | Right-click | Right-click under the finger | 〃 |
+| Long press | Hold the left button for dragging (about 450 ms) | Right-click under the finger | 〃 |
 | Tap, then hold and drag | Drag with the left button (select text, move windows) | — | 〃 |
 | Two-finger tap | Right-click | Right-click | 〃 |
 | Two-finger drag | Scroll (natural, with momentum) | Scroll | 〃 |
 | Pinch | Zoom in, the view follows the pointer | Zoom / move the view | 〃 |
 | Three-finger tap | Show / hide the keyboard | Same | 〃 (the keyboard is in the menu) |
+
+In trackpad mode, lifting your finger releases the left button immediately and drops the item. The next touch is a separate click or pointer movement.
 
 When the remote phone runs Android 7 (no continuous multi-finger gestures), only one finger is passed through and pinching zooms the local view.
 

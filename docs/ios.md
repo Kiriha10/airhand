@@ -29,12 +29,14 @@ Two **input modes** (switch any time in the menu; the default is set in Settings
 |---|---|---|---|
 | One-finger slide | Move the pointer (slow = precise, fast = accelerated) | Drag with the left button | Every finger is passed through (if the remote takes multi-touch) |
 | Tap | Left click, tap twice = double-click | Click there | 〃 |
-| Long press | Right click | Right-click there | 〃 |
+| Long press | Hold the left button for dragging (about 450 ms) | Right-click there | 〃 |
 | Tap, then hold and drag | Drag with the left button | — | 〃 |
 | Two-finger tap | Right click | Right click | 〃 |
 | Two-finger drag | Scroll (natural, with inertia) | Scroll | 〃 |
 | Pinch | Zoom, the picture follows the pointer | Zoom / move the picture | 〃 |
 | Three-finger tap | Show / hide the keyboard | Same | 〃 (keyboard is in the menu) |
+
+In trackpad mode, lifting your finger releases the left button immediately and drops the item. The next touch is a separate click or pointer movement.
 
 After zooming in, Airhand asks the remote for a sharper picture once your fingers stop (720p / 1080p / 1440p / 4K steps, up to the remote's native resolution), and goes back to the quality setting when you zoom out.
 

@@ -166,7 +166,7 @@ class GesturesTest {
         g.move(listOf(p(160f, 101f)), 200)
         g.move(listOf(p(220f, 101f)), 250)
         g.up(p(220f, 101f), 300)
-        timers.advance(Gestures.DRAG_RESUME_MS)
+        assertFalse(g.pressing)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
         // 拖动期间指针在动
         val i = log.indexOfLast { it == "left down" }
@@ -504,51 +504,50 @@ class GesturesTest {
     }
 
     @Test
-    fun liftingAfterADragKeepsTheButtonOnlyForTheResumeWindow() {
+    fun liftingAfterATapDragReleasesLeftBeforeAnyTimerRuns() {
         beginTrackpadDrag()
         at(300) { g.up(p(160f, 100f), 300) }
-        at(799)
-        assertTrue(g.pressing)
-        assertEquals(listOf("left click", "left down"), buttons())
-        at(800)
         assertFalse(g.pressing)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
         assertEquals(listOf(true, false), pressingStates)
+        val released = log.toList()
+        at(1300)
+        assertEquals(released, log)
     }
 
     @Test
-    fun regrippingResumesWithoutASecondPressOrPointerJump() {
+    fun slidingSoonAfterADragMovesThePointerWithoutDragging() {
         beginTrackpadDrag()
         at(300) { g.up(p(160f, 100f), 300) }
         val x = g.cursorX
-        at(500) { g.down(p(900f, 100f), 500) }
+        at(400) { g.down(p(900f, 100f), 400) }
+        assertFalse(g.pressing)
         assertEquals(x, g.cursorX, 0.00001f)
-        at(520) { g.move(listOf(p(920f, 100f)), 520) }
+        at(420) { g.move(listOf(p(920f, 100f)), 420) }
+        assertFalse(g.pressing)
         assertTrue(g.cursorX > x && g.cursorX - x < 0.1f)
-        at(540) { g.up(p(920f, 100f), 540) }
-        at(800) // The old resume timer must have been cancelled.
-        assertTrue(g.pressing)
-        at(1040)
+        at(440) { g.up(p(920f, 100f), 440) }
+        at(1200)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
         assertEquals(listOf(true, false), pressingStates)
     }
 
     @Test
-    fun tappingDuringTheResumeWindowDropsWithoutAnotherClick() {
+    fun tappingSoonAfterADragIsANewLeftClick() {
         beginTrackpadDrag()
         at(300) { g.up(p(160f, 100f), 300) }
         at(450) { g.down(p(900f, 100f), 450) }
+        assertFalse(g.pressing)
         at(470) { g.up(p(900f, 100f), 470) }
         assertFalse(g.pressing)
         at(1200)
-        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertEquals(listOf("left click", "left down", "left up", "left click"), buttons())
     }
 
     @Test
-    fun cancelReleasesAPendingDragImmediately() {
+    fun cancelReleasesAnActiveDragImmediately() {
         beginTrackpadDrag()
-        at(300) { g.up(p(160f, 100f), 300) }
-        at(350) { g.cancel() }
+        at(250) { g.cancel() }
         assertFalse(g.pressing)
         at(1200)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
@@ -556,13 +555,58 @@ class GesturesTest {
     }
 
     @Test
-    fun changingModeReleasesAPendingDragImmediately() {
+    fun changingModeReleasesAnActiveDragImmediately() {
         beginTrackpadDrag()
-        at(300) { g.up(p(160f, 100f), 300) }
-        at(350) { g.mode = Gestures.Mode.TOUCH }
+        at(250) { g.mode = Gestures.Mode.TOUCH }
         assertFalse(g.pressing)
         at(1200)
         assertEquals(listOf("left click", "left down", "left up"), buttons())
+    }
+
+    @Test
+    fun liftingAfterALongPressDragFlushesTheFinalMoveThenReleasesLeft() {
+        at(0) { g.down(p(100f, 100f), 0) }
+        at(450)
+        at(500) { g.move(listOf(p(160f, 100f)), 500) }
+        val x = g.cursorX
+        log.clear()
+        at(550) { g.up(p(200f, 100f), 550) }
+        assertTrue(g.cursorX > x)
+        assertTrue(log.first().startsWith("move "))
+        assertEquals("left up", log.last())
+        assertFalse(g.pressing)
+        assertEquals(listOf(true, false), pressingStates)
+        val released = log.toList()
+        at(1550)
+        assertEquals(released, log)
+    }
+
+    @Test
+    fun aNewLongPressAfterADragNeedsItsOwnHoldAndHasNoStaleRelease() {
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        at(400) { g.down(p(900f, 100f), 400) }
+        at(849)
+        assertFalse(g.pressing)
+        at(850)
+        assertTrue(g.pressing)
+        at(1400)
+        assertTrue(g.pressing)
+        at(1450) { g.up(p(900f, 100f), 1450) }
+        assertFalse(g.pressing)
+        assertEquals(listOf("left click", "left down", "left up", "left down", "left up"), buttons())
+        assertEquals(listOf(true, false, true, false), pressingStates)
+    }
+
+    @Test
+    fun aRelativeTrackpadDragAlsoReleasesOnLift() {
+        g.relative = true
+        beginTrackpadDrag()
+        at(300) { g.up(p(160f, 100f), 300) }
+        assertFalse(g.pressing)
+        assertEquals(listOf("left click", "left down", "left up"), buttons())
+        assertTrue(log.any { it.startsWith("delta ") })
+        assertTrue(log.none { it.startsWith("move ") })
     }
 
     @Test

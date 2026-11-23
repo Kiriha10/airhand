@@ -391,7 +391,7 @@
     <string name="g_click_there">Click under your finger</string>
     <string name="g_right_click_there">Right-click under your finger</string>
     <string name="g_drag">Drag with the left button (select text, move windows)</string>
-    <string name="g_drag_trackpad">Drag with the left button. Lift briefly to reposition; tap to drop.</string>
+    <string name="g_drag_trackpad">Drag with the left button. Lift your finger to drop immediately.</string>
     <string name="g_scroll">Scroll</string>
     <string name="g_zoom">Zoom in (the view follows the pointer)</string>
     <string name="g_zoom_pan">Zoom and move the view</string>
