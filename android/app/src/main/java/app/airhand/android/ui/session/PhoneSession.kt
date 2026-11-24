@@ -116,6 +116,7 @@ import app.airhand.android.core.PrivacyState
 import app.airhand.android.core.SystemAction
 import app.airhand.android.data.TouchMode
 import app.airhand.android.ui.ConfirmDialog
+import app.airhand.android.ui.SessionDialogImmersive
 import app.airhand.android.ui.Messages
 import app.airhand.android.ui.OsAvatar
 import app.airhand.android.ui.phone.presetDesc
@@ -341,6 +342,7 @@ fun PhoneSession(
             sheetState = sheet,
             containerColor = MaterialTheme.colorScheme.surfaceContainer,
         ) {
+            SessionDialogImmersive()
             BackHandler(enabled = page != Page.MAIN) { page = Page.MAIN }
             Column(
                 Modifier

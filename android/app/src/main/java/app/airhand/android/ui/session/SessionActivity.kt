@@ -35,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,8 +51,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import app.airhand.android.AirhandApp
 import app.airhand.android.R
@@ -60,6 +59,8 @@ import app.airhand.android.core.Code
 import app.airhand.android.core.DisplayInfo
 import app.airhand.android.core.OsKind
 import app.airhand.android.ui.Messages
+import app.airhand.android.ui.LocalSessionImmersive
+import app.airhand.android.ui.hideSessionSystemBars
 import app.airhand.android.ui.theme.AirhandTheme
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
@@ -100,10 +101,7 @@ class SessionActivity : ComponentActivity(), RemoteView.Host {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        WindowInsetsControllerCompat(window, window.decorView).apply {
-            hide(WindowInsetsCompat.Type.systemBars())
-            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        }
+        window.hideSessionSystemBars()
         view = RemoteView(this, this).apply {
             interactive = !tv
             if (tv) {
@@ -129,10 +127,12 @@ class SessionActivity : ComponentActivity(), RemoteView.Host {
         }
         setContent {
             AirhandTheme(dark = true) {
-                if (tv) {
-                    TvSession(s, view, onExit = ::exit)
-                } else {
-                    PhoneSession(s, view, keyboard, keyboardOpen, landscape.value, onRotate = ::rotate, onExit = ::exit)
+                CompositionLocalProvider(LocalSessionImmersive provides true) {
+                    if (tv) {
+                        TvSession(s, view, onExit = ::exit)
+                    } else {
+                        PhoneSession(s, view, keyboard, keyboardOpen, landscape.value, onRotate = ::rotate, onExit = ::exit)
+                    }
                 }
             }
         }
@@ -166,6 +166,11 @@ class SessionActivity : ComponentActivity(), RemoteView.Host {
     override fun onStart() {
         super.onStart()
         session?.setBackground(false)
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) window.hideSessionSystemBars()
     }
 
     override fun onStop() {

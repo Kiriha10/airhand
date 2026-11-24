@@ -97,6 +97,7 @@ import app.airhand.android.data.GameTemplate
 import app.airhand.android.data.KeyMode
 import app.airhand.android.ui.ConfirmDialog
 import app.airhand.android.ui.EditTextDialog
+import app.airhand.android.ui.SessionDialogImmersive
 import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -272,7 +273,10 @@ private fun LayoutRow(
 private fun TemplateDialog(onDismiss: () -> Unit, onPick: (GameTemplate) -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.game_new_title)) },
+        title = {
+            SessionDialogImmersive()
+            Text(stringResource(R.string.game_new_title))
+        },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 GameTemplate.entries.forEach { t ->
@@ -715,6 +719,7 @@ private fun KeyPicker(
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
     ) {
+        SessionDialogImmersive()
         Column(
             Modifier
                 .verticalScroll(rememberScrollState())

@@ -229,7 +229,10 @@ fun EditTextDialog(
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            SessionDialogImmersive()
+            Text(title)
+        },
         text = {
             Column {
                 OutlinedTextField(
@@ -264,7 +267,10 @@ fun ConfirmDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            SessionDialogImmersive()
+            Text(title)
+        },
         text = { Text(text) },
         confirmButton = {
             TextButton(onClick = onConfirm) {
@@ -287,7 +293,10 @@ fun <T> ChoiceDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        title = {
+            SessionDialogImmersive()
+            Text(title)
+        },
         text = {
             Column {
                 options.forEach { o ->

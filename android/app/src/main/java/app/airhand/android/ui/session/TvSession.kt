@@ -73,6 +73,7 @@ import app.airhand.android.core.OsKind
 import app.airhand.android.core.Preset
 import app.airhand.android.data.ScaleMode
 import app.airhand.android.ui.Messages
+import app.airhand.android.ui.SessionDialogImmersive
 import app.airhand.android.ui.phone.presetName
 import app.airhand.android.ui.theme.Brand
 import kotlinx.coroutines.delay
@@ -234,7 +235,10 @@ fun TvSession(session: RemoteSession, view: RemoteView, onExit: () -> Unit) {
         val focus = remember { FocusRequester() }
         AlertDialog(
             onDismissRequest = { confirmExit = false },
-            title = { Text(stringResource(R.string.disconnect_title)) },
+            title = {
+                SessionDialogImmersive()
+                Text(stringResource(R.string.disconnect_title))
+            },
             text = { Text(stringResource(R.string.disconnect_text, name.ifBlank { Code.format(session.code) })) },
             confirmButton = {
                 TextButton(onClick = {
