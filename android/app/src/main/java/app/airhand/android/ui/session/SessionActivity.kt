@@ -60,6 +60,7 @@ import app.airhand.android.core.DisplayInfo
 import app.airhand.android.core.OsKind
 import app.airhand.android.ui.Messages
 import app.airhand.android.ui.LocalSessionImmersive
+import app.airhand.android.ui.LocalSessionWindow
 import app.airhand.android.ui.hideSessionSystemBars
 import app.airhand.android.ui.theme.AirhandTheme
 import kotlinx.coroutines.flow.combine
@@ -127,7 +128,10 @@ class SessionActivity : ComponentActivity(), RemoteView.Host {
         }
         setContent {
             AirhandTheme(dark = true) {
-                CompositionLocalProvider(LocalSessionImmersive provides true) {
+                CompositionLocalProvider(
+                    LocalSessionImmersive provides true,
+                    LocalSessionWindow provides window,
+                ) {
                     if (tv) {
                         TvSession(s, view, onExit = ::exit)
                     } else {
