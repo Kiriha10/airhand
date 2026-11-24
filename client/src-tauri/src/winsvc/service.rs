@@ -19,7 +19,7 @@ use windows::Win32::Foundation::{
 use windows::Win32::Security::{
     DuplicateTokenEx, SECURITY_ATTRIBUTES, SecurityImpersonation, SetTokenInformation,
     TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_SESSIONID, TOKEN_ALL_ACCESS, TOKEN_ASSIGN_PRIMARY,
-    TOKEN_DUPLICATE, TOKEN_QUERY, TokenPrimary, TokenSessionId,
+    TOKEN_DUPLICATE, TOKEN_QUERY, TokenPrimary, TokenSessionId, TokenUIAccess,
 };
 use windows::Win32::System::RemoteDesktop::WTSGetActiveConsoleSessionId;
 use windows::Win32::System::Services::{
@@ -297,6 +297,19 @@ fn spawn_agent(session: u32) -> Result<Agent> {
             std::mem::size_of::<u32>() as u32,
         )
         .context("SetTokenInformation(TokenSessionId)")?;
+
+        // SYSTEM 身份并不自带 UIAccess。图片隐私屏需要 UIAccess 窗口层级，
+        // 才能遮住 Shell 拖拽窗口等普通置顶 UI。只设置服务自己复制的被控端令牌，
+        // 不提升托盘或外部进程；失败时继续提供原有远控/驱动模式，图片模式会拒绝开启。
+        let ui_access = 1u32;
+        if let Err(e) = SetTokenInformation(
+            primary.0,
+            TokenUIAccess,
+            &ui_access as *const u32 as *const core::ffi::c_void,
+            size_of::<u32>() as u32,
+        ) {
+            warn!("image privacy needs UIAccess; can't enable it for the host: {e}");
+        }
 
         // 被控端继承这个事件的句柄，服务用它通知被控端退出
         let sa = SECURITY_ATTRIBUTES {

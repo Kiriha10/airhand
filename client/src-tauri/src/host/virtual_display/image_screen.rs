@@ -11,8 +11,17 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::{Deserialize, Serialize};
 
+mod cursor;
+mod desktops;
 mod windows;
-use windows::Covers;
+use desktops::DesktopCovers;
+
+pub(crate) use cursor::physically_hidden as physical_cursor_hidden;
+
+#[cfg(test)]
+pub(crate) fn hide_test_cursor() -> Result<impl Drop> {
+    cursor::HiddenCursor::new(cursor::Runtime::new()?)
+}
 
 const MAX_FILE: usize = 8 * 1024 * 1024;
 const MAX_PIXELS: u64 = 16_000_000;
@@ -87,7 +96,7 @@ pub fn auto_on() -> bool {
     s.options.image_mode && s.options.auto_on
 }
 pub fn usable() -> bool {
-    windows::supported()
+    windows::supported() && windows::has_ui_access()
 }
 
 pub fn show_error(message: &str) {
@@ -183,7 +192,9 @@ fn update_inner(update: Update) -> Result<()> {
         return Ok(());
     }
     if matches!(update, Update::Mode { image: true }) && !usable() {
-        bail!("image privacy needs Windows 10 version 2004 or newer");
+        bail!(
+            "image privacy needs Windows 10 version 2004 or newer and an all-user installation with UIAccess; restart Airhand after updating"
+        );
     }
     let reset_image = matches!(update, Update::ResetImage);
     {
@@ -282,7 +293,7 @@ fn run() {
     } else {
         None
     };
-    let mut covers: Option<Covers> = None;
+    let mut covers: Option<DesktopCovers> = None;
     let mut blocker = None;
     loop {
         let (on, stopping) = {
@@ -299,7 +310,7 @@ fn run() {
             let result = if let Some(c) = &mut covers {
                 c.refresh()
             } else {
-                Covers::new(picture.as_deref()).map(|c| {
+                DesktopCovers::new(picture.as_deref()).map(|c| {
                     covers = Some(c);
                 })
             };

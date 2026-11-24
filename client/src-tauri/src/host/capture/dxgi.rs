@@ -11,6 +11,7 @@
 //!   画面的宽高、方向与 [`DisplayInfo`]（桌面坐标）一致，控制端的鼠标坐标才能对上。
 
 mod hdr;
+mod privacy_cursor;
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -414,6 +415,8 @@ pub struct DxgiCapturer {
     drawn_fresh: bool,
     /// 把光标那一块读回来用的 staging 纹理
     pointer_staging: PointerStaging,
+    privacy_active: bool,
+    privacy_cursor: privacy_cursor::Cursor,
 }
 
 /// 把光标那一块从显卡上读回来用的 staging 纹理（够大就接着用）
@@ -515,6 +518,8 @@ impl DxgiCapturer {
                 last: None,
                 drawn_fresh: false,
                 pointer_staging: PointerStaging::default(),
+                privacy_active: false,
+                privacy_cursor: privacy_cursor::Cursor::default(),
             })
         }
     }
@@ -571,6 +576,32 @@ impl Capturer for DxgiCapturer {
         pool: &mut FramePool,
         draw: bool,
     ) -> Result<CaptureUpdate> {
+        let privacy = crate::host::virtual_display::image_screen::physical_cursor_hidden();
+        if privacy != self.privacy_active {
+            self.privacy_active = privacy;
+            self.drawn_fresh = false;
+            self.pointer.visible = self.hw_cursor;
+            if !privacy {
+                self.privacy_cursor = Default::default();
+            }
+        }
+        let mut update = CaptureUpdate::default();
+        let mut pointer_changed = false;
+        if privacy {
+            // 隐私屏隐藏的是物理系统光标；它不会再出现在原始画面中。
+            // 保留应用的逻辑状态和形状，游戏自己隐藏时仍然报 Hidden。
+            let p = self.privacy_cursor.observe(&self.desktop);
+            let visible = p.visibility == CursorVisibility::Shown && p.here;
+            pointer_changed = self.pointer.visible != visible
+                || (visible && self.pointer.pos != p.pos)
+                || p.shape.is_some();
+            self.pointer.visible = visible;
+            self.pointer.pos = p.pos;
+            self.pointer.bitmap = p.bitmap;
+            update.cursor_visibility = Some(p.visibility);
+            update.cursor_here = Some(p.here);
+            update.cursor_shape = p.shape;
+        }
         if !draw {
             self.drawn_fresh = false;
         } else if !self.drawn_fresh
@@ -579,10 +610,8 @@ impl Capturer for DxgiCapturer {
             // 刚开始要带光标的画面：用最新的画面马上给一帧，不等画面变化
             let drawn = self.draw_pointer(&base, Instant::now(), pool)?;
             self.drawn_fresh = true;
-            return Ok(CaptureUpdate {
-                drawn: Some(drawn),
-                ..Default::default()
-            });
+            update.drawn = Some(drawn);
+            return Ok(update);
         }
         let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
         let mut res: Option<IDXGIResource> = None;
@@ -591,29 +620,36 @@ impl Capturer for DxgiCapturer {
                 .AcquireNextFrame(timeout.as_millis() as u32, &mut info, &mut res)
         } {
             if e.code() == DXGI_ERROR_WAIT_TIMEOUT {
-                return Ok(CaptureUpdate::default());
+                if draw
+                    && pointer_changed
+                    && let Some(base) = self.last.clone()
+                {
+                    update.drawn = Some(self.draw_pointer(&base, Instant::now(), pool)?);
+                    self.drawn_fresh = true;
+                }
+                return Ok(update);
             }
             return Err(anyhow!("AcquireNextFrame: {e}"));
         }
-        let mut update = CaptureUpdate::default();
 
         // 光标：位置由控制端本地光标负责，这里只同步可见性与形状。
         // 硬件光标不可见时不一定是隐藏了，可能是改成了画进画面里的软件光标（见 software_cursor）：
         // 这期间每一帧都再看一次，软件光标期间程序隐藏了光标（画面会变）也能发现
         // 带光标的画面要不要重画：光标动了、出现 / 隐藏了、换了形状
-        let mut pointer_changed = false;
         if info.LastMouseUpdateTime != 0 {
             self.hw_cursor = info.PointerPosition.Visible.as_bool();
-            let pos = (
-                info.PointerPosition.Position.x,
-                info.PointerPosition.Position.y,
-            );
-            pointer_changed = self.hw_cursor != self.pointer.visible
-                || (self.hw_cursor && pos != self.pointer.pos);
-            self.pointer.visible = self.hw_cursor;
-            self.pointer.pos = pos;
+            if !privacy {
+                let pos = (
+                    info.PointerPosition.Position.x,
+                    info.PointerPosition.Position.y,
+                );
+                pointer_changed = self.hw_cursor != self.pointer.visible
+                    || (self.hw_cursor && pos != self.pointer.pos);
+                self.pointer.visible = self.hw_cursor;
+                self.pointer.pos = pos;
+            }
         }
-        if info.LastMouseUpdateTime != 0 || !self.hw_cursor {
+        if !privacy && (info.LastMouseUpdateTime != 0 || !self.hw_cursor) {
             let visibility = if self.hw_cursor {
                 CursorVisibility::Shown
             } else {
@@ -624,7 +660,7 @@ impl Capturer for DxgiCapturer {
             // 这块显示器报的不算数（见 CursorSnapshot::here）
             update.cursor_here = Some(self.hw_cursor || visibility != CursorVisibility::Shown);
         }
-        if info.PointerShapeBufferSize > 0 {
+        if !privacy && info.PointerShapeBufferSize > 0 {
             update.cursor_shape = self.pointer_shape(info.PointerShapeBufferSize);
             pointer_changed = true;
         }
@@ -1255,6 +1291,58 @@ mod tests {
         }
         println!("{inside} pixels changed under the pointer");
         assert!(inside > 0, "the pointer was drawn");
+    }
+
+    /// 用真实 DXGI 确认隐私屏隐藏物理光标时，远端得到的光标信息。
+    #[test]
+    #[ignore = "briefly hides and restores the physical system cursor"]
+    fn native_privacy_cursor_capture() {
+        let mut cap = DxgiCapturer::open(0).unwrap();
+        let mut pool = FramePool::default();
+        let until = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < until {
+            cap.next(Duration::from_millis(30), &mut pool, true)
+                .unwrap();
+        }
+        let before = (
+            cap.hw_cursor,
+            cap.pointer.visible,
+            software_cursor(&cap.desktop),
+        );
+        let hidden = crate::host::virtual_display::image_screen::hide_test_cursor().unwrap();
+        let until = Instant::now() + Duration::from_millis(300);
+        let mut remote = None;
+        while Instant::now() < until {
+            let u = cap
+                .next(Duration::from_millis(30), &mut pool, true)
+                .unwrap();
+            if u.cursor_visibility.is_some() {
+                remote = u.cursor_visibility;
+            }
+        }
+        let during = (
+            cap.hw_cursor,
+            cap.pointer.visible,
+            software_cursor(&cap.desktop),
+        );
+        assert!(crate::host::virtual_display::image_screen::physical_cursor_hidden());
+        drop(hidden);
+        assert!(!crate::host::virtual_display::image_screen::physical_cursor_hidden());
+        println!(
+            "privacy cursor DXGI before={before:?}, during={during:?}, bitmap={:?}",
+            cap.pointer.bitmap.as_ref().map(|b| b.size())
+        );
+        assert_eq!(
+            before.2, during.2,
+            "physical privacy must not change application cursor visibility"
+        );
+        if during.2 != CursorVisibility::Hidden {
+            assert_eq!(
+                remote,
+                Some(CursorVisibility::Shown),
+                "hidden physical cursor is rendered separately at the controller"
+            );
+        }
     }
 
     /// [`Rotation::texel`] 和 [`copy_rotated`] 的对应关系一样

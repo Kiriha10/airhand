@@ -1,6 +1,12 @@
+use ::windows::Win32::Foundation::CloseHandle;
 use ::windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use ::windows::Win32::Graphics::Dwm::{
+    DWMWA_DISALLOW_PEEK, DWMWA_EXCLUDED_FROM_PEEK, DwmSetWindowAttribute,
+};
 use ::windows::Win32::Graphics::Gdi::*;
+use ::windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenUIAccess};
 use ::windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use ::windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use ::windows::Win32::UI::WindowsAndMessaging::*;
 use ::windows::core::{BOOL, w};
 use anyhow::{Result, anyhow, bail};
@@ -32,6 +38,27 @@ pub(super) fn supported() -> bool {
         text: [0; 128],
     };
     unsafe { RtlGetVersion(&mut v) >= 0 && (v.major > 10 || (v.major == 10 && v.build >= 19041)) }
+}
+
+pub(super) fn has_ui_access() -> bool {
+    static ACCESS: OnceLock<bool> = OnceLock::new();
+    *ACCESS.get_or_init(|| unsafe {
+        let mut token = Default::default();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut access = 0u32;
+        let mut needed = 0;
+        let result = GetTokenInformation(
+            token,
+            TokenUIAccess,
+            Some((&mut access as *mut u32).cast()),
+            size_of::<u32>() as u32,
+            &mut needed,
+        );
+        let _ = CloseHandle(token);
+        result.is_ok() && access != 0
+    })
 }
 
 #[derive(Clone)]
@@ -144,6 +171,10 @@ pub(super) struct Covers {
     picture: Arc<Option<Picture>>,
 }
 impl Covers {
+    pub(super) fn handles(&self) -> Vec<usize> {
+        self.windows.iter().map(|w| w.hwnd.0 as usize).collect()
+    }
+
     pub fn new(bytes: Option<&[u8]>) -> Result<Self> {
         if !supported() {
             bail!("image privacy needs Windows 10 version 2004 or newer");
@@ -171,10 +202,8 @@ impl Covers {
     }
 
     pub fn refresh(&mut self) -> Result<()> {
-        // 窗口不能在另一个桌面继续冒充有效遮挡。
-        if crate::host::desktop::input_is_secure() || !crate::host::desktop::on_input_desktop() {
-            bail!("input desktop changed; image privacy ended");
-        }
+        // 每个桌面由独立的遮罩线程维护。非活动桌面的窗口也必须保留，
+        // UAC 切换时目标桌面已经有遮罩，不能在这里销毁普通桌面的窗口。
         let rects = crate::host::dpi_aware(monitors)?;
         if self.rects != rects {
             let mut windows = Vec::new();
@@ -248,6 +277,18 @@ impl Covers {
             _picture: self.picture.clone(),
         };
         unsafe {
+            // Aero Peek 会绕过应用设置的 Alpha，把其他窗口渐隐。
+            // 在显示前设置，API 失败则拒绝开启。这两个属性只支持 DwmSet，
+            // DwmGet 会返回 E_INVALIDARG，不能用它读回验证。
+            let yes = BOOL(1);
+            for attr in [DWMWA_EXCLUDED_FROM_PEEK, DWMWA_DISALLOW_PEEK] {
+                DwmSetWindowAttribute(
+                    hwnd,
+                    attr,
+                    (&yes as *const BOOL).cast(),
+                    size_of::<BOOL>() as u32,
+                )?;
+            }
             SetLayeredWindowAttributes(hwnd, Default::default(), 255, LWA_ALPHA)?;
             SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)?;
             let mut affinity = 0;
@@ -315,6 +356,138 @@ mod tests {
     fn aspect_fit_leaves_opaque_black_bars() {
         assert_eq!(fit(200, 100, 100, 100), (0, 25, 100, 50));
         assert_eq!(fit(100, 200, 100, 100), (25, 0, 50, 100));
+    }
+
+    /// 区分隐藏物理光标是否也会从 DXGI 原始画面移除软件光标，不能仅看可见性标志。
+    #[test]
+    #[ignore = "briefly shows a small reference window and restores the physical cursor"]
+    fn native_physical_cursor_capture_pixels() {
+        use crate::host::capture;
+        use ::windows::Win32::UI::WindowsAndMessaging::{CURSORINFO, GetCursorInfo};
+        use std::time::{Duration, Instant};
+        let mut ci = CURSORINFO {
+            cbSize: size_of::<CURSORINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetCursorInfo(&mut ci) }.unwrap();
+        let d = capture::displays()
+            .into_iter()
+            .find(|d| {
+                (d.x..d.x + d.width as i32).contains(&ci.ptScreenPos.x)
+                    && (d.y..d.y + d.height as i32).contains(&ci.ptScreenPos.y)
+            })
+            .expect("cursor is on a real display");
+        let rect = RECT {
+            left: (ci.ptScreenPos.x - 60).max(d.x),
+            top: (ci.ptScreenPos.y - 60).max(d.y),
+            right: (ci.ptScreenPos.x + 100).min(d.x + d.width as i32),
+            bottom: (ci.ptScreenPos.y + 100).min(d.y + d.height as i32),
+        };
+        fn solid(bgr: [u8; 3]) -> Arc<Option<Picture>> {
+            Arc::new(Some(Picture {
+                pixels: [bgr[0], bgr[1], bgr[2], 255].repeat(64 * 64),
+                width: 64,
+                height: 64,
+            }))
+        }
+        let base = Covers {
+            windows: Vec::new(),
+            rects: Vec::new(),
+            picture: solid([180, 20, 210]),
+        };
+        let mut reference = base.create(&rect).unwrap();
+        unsafe { SetWindowDisplayAffinity(reference.hwnd, WDA_NONE) }.unwrap();
+        let sub = capture::subscribe(d.index, 30, 0, true);
+        let get = |expect: [u8; 3]| {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                pump();
+                if let Some((_, f)) = sub.slot().try_newer(0, false) {
+                    let p = f.pixels().unwrap();
+                    let at = (((rect.top - d.y + 3) as u32 * f.width
+                        + (rect.left - d.x + 3) as u32)
+                        * 4) as usize;
+                    if p[at..at + 3]
+                        .iter()
+                        .zip(expect)
+                        .all(|(a, b)| a.abs_diff(b) < 5)
+                    {
+                        return f;
+                    }
+                }
+                assert!(Instant::now() < deadline, "reference frame did not update");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let count = |f: &crate::host::capture::Frame, bgr: [u8; 3]| {
+            let p = f.pixels().unwrap();
+            let mut n = 0;
+            for y in (ci.ptScreenPos.y - 4).max(rect.top + 3)
+                ..(ci.ptScreenPos.y + 48).min(rect.bottom - 3)
+            {
+                for x in (ci.ptScreenPos.x - 4).max(rect.left + 3)
+                    ..(ci.ptScreenPos.x + 48).min(rect.right - 3)
+                {
+                    let at = (((y - d.y) as u32 * f.width + (x - d.x) as u32) * 4) as usize;
+                    if p[at..at + 3]
+                        .iter()
+                        .zip(bgr)
+                        .any(|(a, b)| a.abs_diff(b) > 20)
+                    {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        let before = get([180, 20, 210]);
+        let before_pixels = count(&before, [180, 20, 210]);
+        let before_state = sub.slot().cursor().visibility;
+        let hidden = super::super::hide_test_cursor().unwrap();
+        reference._picture = solid([30, 200, 40]);
+        unsafe {
+            SetWindowLongPtrW(
+                reference.hwnd,
+                GWLP_USERDATA,
+                Arc::as_ptr(&reference._picture) as isize,
+            );
+            let _ = InvalidateRect(Some(reference.hwnd), None, true);
+            let _ = UpdateWindow(reference.hwnd);
+        }
+        let during = get([30, 200, 40]);
+        let during_pixels = count(&during, [30, 200, 40]);
+        let during_state = sub.slot().cursor().visibility;
+        let drawn = sub
+            .slot()
+            .try_newer(0, true)
+            .expect("frame with logical remote cursor")
+            .1;
+        let drawn_pixels = count(&drawn, [30, 200, 40]);
+        let a = drawn.pixels().unwrap();
+        let b = during.pixels().unwrap();
+        let mut changed = Vec::new();
+        for (at, (a, b)) in a.chunks_exact(4).zip(b.chunks_exact(4)).enumerate() {
+            if a[..3] != b[..3] {
+                changed.push((at % drawn.width as usize, at / drawn.width as usize));
+            }
+        }
+        drop(hidden);
+        println!(
+            "raw DXGI cursor pixels before={before_pixels} ({before_state:?}), hidden={during_pixels} ({during_state:?}), remote-drawn={drawn_pixels}; changed={}, first={:?}, cursor={:?}",
+            changed.len(),
+            changed.first(),
+            ci.ptScreenPos
+        );
+        if ci.flags.0 & CURSOR_SHOWING.0 != 0 {
+            assert_eq!(
+                during_state,
+                airhand_proto::session::CursorVisibility::Shown
+            );
+            assert!(
+                !changed.is_empty(),
+                "remote draw_cursor must still include the logical cursor"
+            );
+        }
     }
 
     /// 真正的物理显示器 / DXGI 集成验证；只短暂创建窗口，不改变驱动、配置或显示拓扑。
