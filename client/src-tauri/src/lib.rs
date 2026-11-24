@@ -98,6 +98,19 @@ enum PairingCmd {
 }
 
 impl Hosting {
+    #[cfg(windows)]
+    fn image_privacy(&self, update: host::virtual_display::image_screen::Update) {
+        match self {
+            Hosting::Service(link) => link.send(winsvc::ipc::ToAgent::ImagePrivacy { update }),
+            Hosting::InProcess(_) => {
+                std::thread::spawn(move || {
+                    if let Err(e) = host::virtual_display::image_screen::update(update) {
+                        warn!("can't update local image privacy: {e:#}");
+                    }
+                });
+            }
+        }
+    }
     fn send(&self, cmd: HostCmd) {
         match self {
             Hosting::InProcess(h) => h.send(cmd),
@@ -372,6 +385,46 @@ fn on_console_destroyed(app: &AppHandle) {
 
 pub(crate) fn on_menu(app: &AppHandle, id: &str) {
     match id {
+        #[cfg(windows)]
+        "privacy_image_mode"
+        | "privacy_driver_mode"
+        | "privacy_auto"
+        | "privacy_reset_image"
+        | "privacy_off"
+        | "privacy_choose_image" => {
+            use host::virtual_display::image_screen::{self, Update};
+            if id == "privacy_choose_image" {
+                let app = app.clone();
+                std::thread::spawn(move || match image_screen::choose_image() {
+                    Ok(Some(data)) => {
+                        if let Some(h) = &app.state::<AppState>().services.lock().unwrap().host {
+                            h.image_privacy(Update::Image { data });
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => image_screen::show_error(&e.to_string()),
+                });
+            } else {
+                let state = app.state::<AppState>();
+                let auto = state
+                    .hub
+                    .borrow()
+                    .host
+                    .image_privacy
+                    .as_ref()
+                    .is_some_and(|s| s.auto_on);
+                let update = match id {
+                    "privacy_image_mode" => Update::Mode { image: true },
+                    "privacy_driver_mode" => Update::Mode { image: false },
+                    "privacy_auto" => Update::Auto { enabled: !auto },
+                    "privacy_reset_image" => Update::ResetImage,
+                    _ => Update::Off,
+                };
+                if let Some(h) = &state.services.lock().unwrap().host {
+                    h.image_privacy(update);
+                }
+            }
+        }
         // Windows 安装版从被控端模式打开控制台时，也要启动控制端服务，不能只创建窗口。
         "to_controller" | "console" => set_mode(app, Mode::Controller),
         "to_host" => set_mode(app, Mode::Host),

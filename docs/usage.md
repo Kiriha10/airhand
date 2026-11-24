@@ -292,6 +292,10 @@ Send this computer's microphone to the remote computer: programs there (meetings
 
 ### Privacy mode
 
+**Windows image cover (added in this branch)**: on the host computer, open Tray → **Privacy screen → Image cover (no driver)**. Use **Choose an image on this computer…** to import PNG/JPEG, or **Use solid black**. Optionally enable **Image mode: cover automatically on connection**. Pictures stay on the host; controllers cannot upload them. Disconnect all controllers before changing the mode or image.
+
+The cover preserves the existing displays and desktop layout and is excluded from Airhand's capture. **Ctrl+Alt+Shift+F12** on the host restores the screens. Requires Windows 10 2004 or newer. This covers the ordinary desktop; it does not replace driver isolation for secure desktops, UAC or exclusive fullscreen. The system cursor may remain visible. Entering a secure desktop reports failure and restores local input. **Driver blackout (upstream privacy)** keeps the original behavior below.
+
 Keeps the people at the remote computer from seeing what you do: all of its monitors go blank and its keyboard and mouse stop working, so only you can see and control it. Toolbar shield button → **Privacy mode**; on a phone (Android, iPhone / iPad) it's the round button on the edge of the picture → **Privacy mode**, with the current state under the switch.
 
 - Windows hosts have to be installed for all users with the [virtual display](#virtual-display) driver; Mac hosts have to allow Airhand Accessibility (which controlling their keyboard and mouse needs anyway). Otherwise the switch is greyed out and the menu says why. There's no such button for Linux and phones

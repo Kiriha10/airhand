@@ -520,6 +520,12 @@ fn regenerate(before: Option<&str>) -> Result<DocumentMut> {
     if let Some(on) = old.get("prevent_sleep").and_then(Item::as_bool) {
         put_prevent_sleep(&mut doc, on);
     }
+    #[cfg(windows)]
+    for key in ["privacy_screen", "privacy_auto", "privacy_custom_image"] {
+        if let Some(value) = old.get(key) {
+            doc[key] = value.clone();
+        }
+    }
     if let (Some(from), Some(to)) = (
         old.get("code").and_then(Item::as_table_like),
         doc.get_mut("code").and_then(Item::as_table_like_mut),
@@ -558,6 +564,17 @@ fn edit(f: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
         Some(path) => edit_at(&path, f),
         None => Ok(()),
     }
+}
+
+/// 本机选图；源文件路径不会交给服务进程。
+#[cfg(windows)]
+pub(crate) fn save_image_privacy(image_mode: bool, auto_on: bool, custom: bool) -> Result<()> {
+    edit(|doc| {
+        doc["privacy_screen"] = toml_edit::value(if image_mode { "image" } else { "driver" });
+        doc["privacy_auto"] = toml_edit::value(auto_on);
+        doc["privacy_custom_image"] = toml_edit::value(custom);
+        Ok(())
+    })
 }
 
 fn edit_at(path: &Path, f: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
@@ -1566,6 +1583,12 @@ mod tests {
         let mut doc: DocumentMut = template().parse().unwrap();
         doc["server"] = toml_edit::value("relay.example.com:4433");
         doc["autostart"] = toml_edit::value(false);
+        #[cfg(windows)]
+        {
+            doc["privacy_screen"] = toml_edit::value("image");
+            doc["privacy_auto"] = toml_edit::value(true);
+            doc["privacy_custom_image"] = toml_edit::value(true);
+        }
         let code = Reclaim {
             code: 654_321,
             secret: [9; 16],
@@ -1577,6 +1600,13 @@ mod tests {
         let before = doc.to_string();
 
         let after = regenerate(Some(&before)).unwrap().to_string();
+        #[cfg(windows)]
+        {
+            let restored: DocumentMut = after.parse().unwrap();
+            assert_eq!(restored["privacy_screen"].as_str(), Some("image"));
+            assert_eq!(restored["privacy_auto"].as_bool(), Some(true));
+            assert_eq!(restored["privacy_custom_image"].as_bool(), Some(true));
+        }
         let s = parse(&after).unwrap();
         assert_eq!(s.server, DEFAULT_SERVER);
         assert_eq!(s.code(), Some(code));

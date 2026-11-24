@@ -41,6 +41,8 @@ mod block;
 mod curtain;
 #[cfg(windows)]
 pub(crate) mod device;
+#[cfg(windows)]
+pub(crate) mod image_screen;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(windows)]
@@ -146,6 +148,10 @@ impl Wanted {
     /// 这台被控端现在能开防窥（不管设置允不允许）：Windows 要能用虚拟显示器，macOS 要有"辅助功能"权限
     fn privacy_possible(&self) -> bool {
         if cfg!(windows) {
+            #[cfg(windows)]
+            if image_screen::selected() {
+                return image_screen::usable();
+            }
             self.usable
         } else {
             cfg!(target_os = "macos") && self.curtain
@@ -237,10 +243,17 @@ pub fn join(session_id: u64) -> Lease {
         w.curtain = privacy;
     }
     #[cfg(windows)]
-    if usable && !w.running {
+    if (usable || image_screen::selected()) && !w.running {
         w.running = true;
         w.stopping = false;
-        manager::spawn();
+        if image_screen::selected() {
+            if let Err(e) = image_screen::spawn() {
+                w.running = false;
+                w.failed = Some(e.to_string());
+            }
+        } else {
+            manager::spawn();
+        }
     }
     // 补屏、防窥都在 mac 的管理线程上
     #[cfg(target_os = "macos")]
@@ -294,6 +307,10 @@ impl Lease {
 
     /// 能补一块虚拟显示器（会话开始时没有显示器的话值得等它，见 [`APPEAR_WAIT`]）
     pub fn can_fill_in(&self) -> bool {
+        #[cfg(windows)]
+        if image_screen::selected() {
+            return false;
+        }
         HUB.wants.lock().unwrap().usable
     }
 }
@@ -324,6 +341,17 @@ pub fn release_privacy() {
     }
     w.linger = None;
     tracing::info!("privacy mode ends with the remote control");
+    publish(&w);
+    w.poke();
+}
+
+/// 本机紧急恢复图片遮罩，通知所有控制端真实状态。
+#[cfg(windows)]
+fn local_off() {
+    let mut w = HUB.wants.lock().unwrap();
+    w.holders.clear();
+    w.linger = None;
+    w.failed = None;
     publish(&w);
     w.poke();
 }

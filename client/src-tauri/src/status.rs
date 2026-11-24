@@ -88,6 +88,10 @@ pub struct HostStatus {
     /// 被控端还没启动，菜单里不显示这一项
     #[serde(default)]
     pub prevent_sleep: Option<bool>,
+    /// 本机图片遮罩选项；远程控制端不能上传或修改图片。
+    #[cfg(windows)]
+    #[serde(default)]
+    pub image_privacy: Option<crate::host::virtual_display::image_screen::Options>,
 }
 
 impl Default for HostStatus {
@@ -101,6 +105,8 @@ impl Default for HostStatus {
             paired: 0,
             lock_on_end: None,
             prevent_sleep: None,
+            #[cfg(windows)]
+            image_privacy: None,
         }
     }
 }

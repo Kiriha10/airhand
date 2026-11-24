@@ -557,6 +557,8 @@ FunctionEnd
   ${AndIf} $0 != "1"
     Delete "$INSTDIR\config.toml"
     Delete "$INSTDIR\config.toml.tmp"
+    Delete "$INSTDIR\privacy-image.jpg"
+    Delete "$INSTDIR\privacy-image.jpg.tmp"
     RMDir "$INSTDIR"
     ; 安装程序记下的安装位置和语言（Tauri 只在勾选"删除应用程序数据"时删除）
     DeleteRegKey SHCTX "${MANUPRODUCTKEY}"

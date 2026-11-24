@@ -9,7 +9,7 @@
 //! * 钩子的回调在这个线程的消息循环里调用：回调很快就返回，系统也就不会因为超时把钩子摘掉。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -26,6 +26,30 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::host::input::INJECTED;
+
+static LOCAL_MODIFIERS: AtomicU8 = AtomicU8::new(0);
+
+fn escape_key(vk: u32, release: bool, injected: bool) -> bool {
+    if injected {
+        return false;
+    }
+    let bit = match vk {
+        0x10 | 0xa0 => 1,
+        0xa1 => 2,
+        0x11 | 0xa2 => 4,
+        0xa3 => 8,
+        0x12 | 0xa4 => 16,
+        0xa5 => 32,
+        _ => 0,
+    };
+    if release {
+        LOCAL_MODIFIERS.fetch_and(!bit, Ordering::Relaxed);
+    } else {
+        LOCAL_MODIFIERS.fetch_or(bit, Ordering::Relaxed);
+    }
+    let held = LOCAL_MODIFIERS.load(Ordering::Relaxed);
+    !release && vk == 0x7b && held & 3 != 0 && held & 12 != 0 && held & 48 != 0
+}
 
 /// 本机的输入被挡住了（[`Blocker`] 开着期间）。Drop 时放开
 pub(super) struct Blocker {
@@ -73,6 +97,7 @@ struct Hooks(Vec<HHOOK>);
 
 impl Hooks {
     fn install() -> Self {
+        LOCAL_MODIFIERS.store(0, Ordering::Relaxed);
         let module = unsafe { GetModuleHandleW(None) }
             .ok()
             .map(|m| HINSTANCE(m.0));
@@ -135,6 +160,14 @@ fn run(stop: &AtomicBool, thread_id: &AtomicU32) {
 unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
         let k = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
+        if super::image_screen::selected() {
+            let release = matches!(wparam.0 as u32, WM_KEYUP | WM_SYSKEYUP);
+            // 本机 Ctrl+Alt+Shift+F12 恢复屏幕；远程注入不能伪造此恢复组合。
+            if escape_key(k.vkCode, release, k.flags.contains(LLKHF_INJECTED)) {
+                super::local_off();
+                return LRESULT(1);
+            }
+        }
         let ours = k.flags.contains(LLKHF_INJECTED) && k.dwExtraInfo == INJECTED;
         let release = matches!(wparam.0 as u32, WM_KEYUP | WM_SYSKEYUP);
         if !ours && !release {
@@ -157,4 +190,30 @@ unsafe extern "system" fn mouse(code: i32, wparam: WPARAM, lparam: LPARAM) -> LR
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_a_complete_physical_chord_ends_image_privacy() {
+        LOCAL_MODIFIERS.store(0, Ordering::Relaxed);
+        for vk in [0xa0, 0xa2, 0xa4] {
+            assert!(!escape_key(vk, false, true));
+        }
+        assert!(!escape_key(0x7b, false, false));
+        for vk in [0xa0, 0xa2, 0xa4] {
+            assert!(!escape_key(vk, false, false));
+        }
+        assert!(!escape_key(0x7b, false, true));
+        assert!(escape_key(0x7b, false, false));
+        escape_key(0xa2, true, false);
+        assert!(!escape_key(0x7b, false, false));
+        escape_key(0xa3, false, false);
+        assert!(escape_key(0x7b, false, false));
+        escape_key(0xa2, false, false);
+        escape_key(0xa2, true, false);
+        assert!(escape_key(0x7b, false, false), "right Ctrl is still held");
+        LOCAL_MODIFIERS.store(0, Ordering::Relaxed);
+    }
 }

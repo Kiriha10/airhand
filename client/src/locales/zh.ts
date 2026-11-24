@@ -268,13 +268,13 @@ export default {
 
   // 防窥模式：对方的显示器黑屏、键盘鼠标不起作用，只有控制端看得到、操作得了
   "privacy.toggle": "防窥模式",
-  "privacy.off": "打开后，对方电脑的显示器全部黑屏、键盘鼠标不起作用，只有你看得到、操作得了（画面换成一块虚拟显示器）。断开连接后自动恢复",
-  "privacy.starting": "正在打开：对方电脑正在换成虚拟显示器，要几秒钟",
-  "privacy.on": "已打开：对方电脑的显示器全部黑屏、键盘鼠标不起作用。断开连接 30 秒后自动恢复（期间重连会接着保持）",
+  "privacy.off": "按对方电脑本机的设置遮挡全部显示器，键盘鼠标暂不可用，远程画面和操作继续。断开连接后自动恢复",
+  "privacy.starting": "正在打开对方电脑的隐私屏，请稍候",
+  "privacy.on": "已打开：对方电脑的显示器已遮挡、键盘鼠标暂不可用。正常断开后恢复；断线时等待重连",
   "privacy.failed": "没能打开（{detail}），对方的屏幕已经恢复。可以再试一次",
-  "privacy.unavailable": "对方电脑用不了：需要为所有用户安装 Airhand，并在安装时装上虚拟显示器驱动",
+  "privacy.unavailable": "对方电脑当前的隐私屏方式不可用。请在被控端检查系统支持、图片模式设置或虚拟显示器驱动",
   "privacy.notAllowed": "对方电脑的设置不允许防窥模式（config.toml 里的 privacy_mode）",
-  "privacy.note": "对方电脑前的人可以断开它的网络或者重启它来结束防窥模式",
+  "privacy.note": "图片由被控端本机设置；图片遮罩可在本机按 Ctrl+Alt+Shift+F12 关闭。也可断开连接后恢复",
   // 对方是 Mac：显示器调黑、盖上黑窗口，不换虚拟显示器（见 client/src-tauri/src/host/virtual_display/curtain.rs）
   "privacy.offMac": "打开后，对方 Mac 的显示器全部黑屏、键盘鼠标和触控板不起作用，只有你看得到、操作得了。断开连接后自动恢复",
   "privacy.startingMac": "正在打开",

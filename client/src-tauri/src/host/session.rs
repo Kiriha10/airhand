@@ -560,7 +560,11 @@ impl Platform for Desktop {
             gate.admitted(self.session_id, ip, &admitted);
         }
         self.presence.confirmed(self.session_id);
-        if self.privacy_at_start {
+        #[cfg(windows)]
+        let auto_privacy = virtual_display::image_screen::auto_on();
+        #[cfg(not(windows))]
+        let auto_privacy = false;
+        if self.privacy_at_start || auto_privacy {
             self.screens.set_privacy(true);
         }
     }

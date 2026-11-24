@@ -174,6 +174,8 @@ impl HostService {
     /// 启动被控端，状态写进 `hub` 的 [`AppStatus::host`](crate::status::AppStatus::host)。
     /// `code`：取回哪个控制码；同一个进程里停下再启动的被控端要用同一个 [`HostCode`]
     pub fn start(hub: StatusHub, code: HostCode) -> Self {
+        #[cfg(windows)]
+        virtual_display::image_screen::init(hub.clone());
         clock::init();
         let lock_on_end = Some(ending::lock_on_end());
         // 不自动睡眠只有 macOS 有（菜单里只在知道现在的设置时显示）

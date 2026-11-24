@@ -69,6 +69,10 @@ pub struct AgentStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ToAgent {
+    /// 本机会话设置图片遮罩，不接受远控协议传来的图片或源路径。
+    ImagePrivacy {
+        update: crate::host::virtual_display::image_screen::Update,
+    },
     KickAll,
     NewCode,
     SetAutostart {
@@ -238,6 +242,15 @@ async fn serve_tray(pipe: NamedPipeServer, hub: StatusHub, agent: Agent) -> Resu
 async fn handle(msg: ToAgent, agent: &Agent, hub: &StatusHub) {
     let (cmds, autostart) = (&agent.cmds, &agent.autostart);
     match msg {
+        ToAgent::ImagePrivacy { update } => {
+            let result = tokio::task::spawn_blocking(move || {
+                crate::host::virtual_display::image_screen::update(update)
+            })
+            .await;
+            if let Ok(Err(e)) = result {
+                warn!("can't update local image privacy: {e:#}");
+            }
+        }
         ToAgent::KickAll => {
             let _ = cmds.send(HostCmd::KickAll);
         }

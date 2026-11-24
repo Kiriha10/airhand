@@ -334,6 +334,96 @@ fn login_item_entry(
 /// 被控端：服务器状态、控制码、正在控制本机的控制端
 fn host_items(app: &AppHandle, menu: &Menu<Wry>, st: &AppStatus) -> tauri::Result<()> {
     menu.append(&label(app, server_line(&st.host.server))?)?;
+    #[cfg(windows)]
+    if let Some(options) = &st.host.image_privacy {
+        let submenu = tauri::menu::Submenu::new(app, tr!("隐私屏", "Privacy screen"), true)?;
+        let idle = st.host.controllers.is_empty() && !options.active;
+        if !idle {
+            submenu.append(&label(
+                app,
+                tr!(
+                    "断开所有控制端后可修改模式和图片",
+                    "Disconnect all controllers to change the mode or image"
+                ),
+            )?)?;
+        }
+        for (id, text, checked) in [
+            (
+                "privacy_driver_mode",
+                tr!(
+                    "驱动黑屏（上游防窥模式）",
+                    "Driver blackout (upstream privacy)"
+                ),
+                !options.image_mode,
+            ),
+            (
+                "privacy_image_mode",
+                tr!("图片遮罩（无需驱动）", "Image cover (no driver)"),
+                options.image_mode,
+            ),
+        ] {
+            submenu.append(&CheckMenuItem::with_id(
+                app,
+                id,
+                text,
+                idle,
+                checked,
+                None::<&str>,
+            )?)?;
+        }
+        submenu.append(&PredefinedMenuItem::separator(app)?)?;
+        submenu.append(&CheckMenuItem::with_id(
+            app,
+            "privacy_auto",
+            tr!(
+                "图片模式：连接时自动遮挡",
+                "Image mode: cover automatically on connection"
+            ),
+            idle,
+            options.auto_on,
+            None::<&str>,
+        )?)?;
+        submenu.append(&MenuItem::with_id(
+            app,
+            "privacy_choose_image",
+            tr!("本机选择图片…", "Choose an image on this computer…"),
+            idle,
+            None::<&str>,
+        )?)?;
+        submenu.append(&MenuItem::with_id(
+            app,
+            "privacy_reset_image",
+            tr!("恢复纯黑", "Use solid black"),
+            idle && options.custom_image,
+            None::<&str>,
+        )?)?;
+        submenu.append(&label(
+            app,
+            if options.custom_image {
+                tr!("当前：本机自定义图片", "Current: local custom image")
+            } else {
+                tr!("当前：纯黑", "Current: solid black")
+            },
+        )?)?;
+        submenu.append(&label(
+            app,
+            tr!(
+                "图片遮罩：Ctrl+Alt+Shift+F12 恢复屏幕",
+                "Image cover: Ctrl+Alt+Shift+F12 restores the screen"
+            ),
+        )?)?;
+        submenu.append(&MenuItem::with_id(
+            app,
+            "privacy_off",
+            tr!("立即关闭隐私屏", "Turn privacy off now"),
+            true,
+            None::<&str>,
+        )?)?;
+        if let Some(error) = &options.error {
+            submenu.append(&label(app, format!("⚠ {error}"))?)?;
+        }
+        menu.append(&submenu)?;
+    }
     {
         #[cfg(target_os = "macos")]
         permission_items(app, menu)?;
