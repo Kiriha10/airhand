@@ -6,17 +6,19 @@
 
 Double-click to run (on Windows install it first, see [Windows installation](#windows-installation)). A tray icon appears in the bottom-right corner (on macOS in the menu bar at the top of the screen, on Linux in the top bar / panel status area). Grey means not connected to the server, coloured means connected. The right-click menu (a plain click on macOS) contains:
 
-- Current mode and server status
+- Server status (and the current mode on macOS and Linux)
 - The **control code** and "Copy control code"
 - The **pairing code**, "Copy pairing code" and **Change pairing code**: a controller that hasn't paired with this computer needs it, besides the control code, the first time it connects (see "Pairing" below)
 - Who is controlling this computer right now (with the **safety code** after each connection), and **Disconnect all controllers**
 - **Change control code**: the old code stops working immediately and connected controllers are disconnected; the pairing code changes too and all paired controllers are forgotten
 - **Forget paired controllers**: they'll need the pairing code again
-- Open console and **Start with Windows** (Windows) / Switch to controller (macOS, Linux) and **Open at login** (macOS) / Language / **Uninstall Airhand…** (macOS, see [Uninstalling](#uninstalling)) / Quit
+- Open console and **Start with Windows** (Windows; **Start when you sign in** when installed just for you) / Switch to controller (macOS, Linux) and **Open at login** (macOS) / **Lock screen when remote control ends** (see below) / **Prevent automatic sleeping** (macOS, see below) / Language / **Uninstall Airhand…** (macOS, see [Uninstalling](#uninstalling)) / Quit
 
 After a network drop the host reconnects automatically with exponential backoff and **gets its old control code back**, even after a server restart. The code is **fixed**: it's saved in `config.toml`, and the server keeps it for this computer however long it stays offline (codes unused for 180 days are released), so it stays the same across restarts and upgrades until you change it.
 
 **Pairing**: the relay server assigns control codes, so it knows all of them; the control code alone therefore doesn't get anyone in (otherwise the server could connect by itself). The first time a controller connects to this computer it has to enter the 6-digit **pairing code** from the tray menu; the pairing code never goes through the server. After that this computer remembers the controller and the control code is enough. After 5 wrong pairing codes in a row pairing is paused (the tray says so) until you pick a new pairing code. There's no way to turn pairing off. See [Security → End-to-end encryption](security.md#end-to-end-encryption).
+
+**Locking when the remote control ends** (on by default): when the remote control ends this computer locks its screen, and [privacy mode](#privacy-mode) ends with it (the screen is locked before the monitors come back, so the desktop never shows). It locks right away when the controller disconnects; if the connection dropped, after 30 seconds if it didn't come back; not while another controller is still connected. Disconnecting all controllers from the tray, or quitting Airhand while a controller is connected, locks it too. To keep the screen unlocked, uncheck **Lock screen when remote control ends** in the tray menu; it takes effect right away (it's saved as `lock_on_end` in `config.toml`, see [Configuration file](#configuration-file)).
 
 > On Linux the tray icon uses AppIndicator. It works out of the box on Ubuntu, KDE, Xfce and similar; stock GNOME needs the "AppIndicator and KStatusNotifierItem Support" extension. Without an AppIndicator library the program still runs as a host and prints the control code to the log (stderr).
 
@@ -24,15 +26,61 @@ After a network drop the host reconnects automatically with exponential backoff 
 
 > **Open at login** on macOS (switched in the menu bar icon's menu): after you log in, Airhand starts in the menu bar by itself, so the Mac can still be controlled after a restart (on macOS programs can only run after login, and the login window can't be captured anyway; with automatic login it amounts to starting at boot). It is the same entry as "Open at Login" in System Settings → General → Login Items ("Login Items & Extensions" on some versions of macOS), so turning it off there works too and the menu follows. **It's turned on the first time Airhand runs from the Applications folder** (macOS shows a "Login Item Added" notification), and only that once: if you turn it off, it stays off and Airhand never turns it back on by itself. Only an Airhand in the Applications folder (`/Applications` or `~/Applications`) can turn it on: when it's opened straight from Downloads or a disk image, macOS runs it from a temporary location that won't be there next time, so the menu asks you to move it to the Applications folder first.
 
+> **Lock screen and sleep** on macOS: while a controller is connected the Mac doesn't turn its display off or go to sleep because nobody touches the keyboard and mouse. A locked Mac can still be controlled: if its display is off, Airhand wakes it when a controller connects, you see the lock screen and typing the password unlocks it (with **Lock screen when remote control ends** on, it locks again after you disconnect). But a Mac that is **asleep** is offline (programs are frozen and the connection to the server drops), so controllers can't reach it until it wakes up. To keep it reachable, check **Prevent automatic sleeping** in the menu bar icon's menu (off by default, takes effect right away, saved as `prevent_sleep` in `config.toml`): while Airhand runs as a host on a power adapter the Mac doesn't sleep when idle or when you close a laptop's lid, and the display still turns off; on battery it sleeps as usual. It works much like "Prevent automatic sleeping when the display is off" in System Settings (under Energy on desktops, Battery → Options on laptops), except that it only applies while Airhand runs, also covers a closed lid and doesn't change your settings. Choosing Sleep from the Apple menu, closing the lid on battery and a low battery still put it to sleep.
+>
+> **Privacy mode**: when a controller turns it on (see [Privacy mode](#privacy-mode)), all of this Mac's displays go black (the backlight stays on) with a black window over each of them, and its keyboard, mouse and trackpad stop working, while the controller still sees and controls everything. Airhand needs the **Accessibility** permission for it (the host needs it to control the keyboard and mouse anyway); without it the controller's switch is greyed out. No display settings are changed: when Airhand quits (or crashes) the displays, keyboard and mouse come back right away.
+>
+> **Closing the lid during remote control** (MacBook): on a power adapter the Mac keeps running and stays under control. While a controller is connected to a MacBook on power with no external display (and, with **Prevent automatic sleeping** on, all the time Airhand runs as a host, so a controller connecting after the lid has been closed gets a picture too), Airhand keeps a virtual display ready that mirrors the built-in one ("Airhand" in System Settings → Displays; the screen may flash once when it's added and when it's removed). While it mirrors, a 120 Hz display may run at 60 Hz. You won't notice it, and the controller still sees one display. Close the lid and macOS switches to it: the windows move onto it and the controller keeps seeing and controlling the desktop, with sound. Open the lid and macOS switches back. A Mac with no display connected (a Mac mini) gets a virtual display too. Without **Prevent automatic sleeping**, the virtual display stays for 30 seconds after the last controller disconnects (in case it reconnects); after that a Mac with its lid closed goes to sleep as usual. On battery a closed lid still puts the Mac to sleep.
+
 ## Windows installation
 
-On Windows Airhand is installed with its installer (into `C:\Program Files\Airhand` for all users; needs administrator rights). The host runs as the system service **Airhand**, as SYSTEM in the session of whoever is at the screen, so it keeps working on the lock screen, the sign-in screen and UAC prompts, and follows when users are switched. The tray icon is an ordinary program that shows the service's status and controls it:
+On Windows Airhand is installed with its installer, either for all users or just for you:
+
+| | For all users (recommended) | Just for me |
+|---|---|---|
+| Administrator rights | Needed | Not needed |
+| Installed into | `C:\Program Files\Airhand`, shared by all users | `%LOCALAPPDATA%\Programs\Airhand`, only for you |
+| Host | A system service: the lock screen, the sign-in screen and UAC prompts can be controlled too | Inside the tray process, running as you: the lock screen, the sign-in screen and UAC prompts can't be controlled, and windows running as administrator can only be viewed |
+| Starts automatically | With Windows, so the computer can be controlled before anyone signs in | When you sign in |
+| Install folder | Only inside Program Files: the service runs the program there as SYSTEM, and elsewhere ordinary users might be able to change it | Not inside Program Files or the Windows folder: settings are saved next to the program |
+
+- **First install**: administrator accounts choose in the installer (for all users by default). For other accounts the installer asks first: Yes runs it again as administrator (you'll need an administrator password) to install for all users; No installs just for you
+- **Upgrading, reinstalling**: the installer keeps the way Airhand was installed and doesn't ask again. The copy installed for all users needs administrator rights; other accounts get an explanation and then a prompt for an administrator password. If the tray was open before the upgrade, it opens again afterwards (when you upgrade someone's computer remotely, the connection comes back)
+- **Switching between the two**: uninstall first, then install again
+
+### For all users
+
+The host runs as the system service **Airhand**, as SYSTEM in the session of whoever is at the screen, so it keeps working on the lock screen, the sign-in screen and UAC prompts, and follows when users are switched. The tray icon is an ordinary program that shows the service's status and controls it:
 
 - Opening Airhand starts the service; **Quit** in the tray stops it (as before, the computer can't be controlled after quitting); when the service stops (or is uninstalled) the tray icons close too
-- **Start with Windows** (tray menu, on by default): the service starts at boot, so the computer can be controlled before anyone signs in, and the tray icon appears after signing in
+- **Start with Windows** (tray menu, on by default): the service starts at boot, so the computer can be controlled before anyone signs in, and the tray icon appears after signing in. Disabling Airhand under Startup apps in Task Manager only keeps the tray from opening after sign-in (the service still starts at boot), and the tick in the tray menu doesn't follow it: turn Start with Windows off and on again in the menu to bring it back
 - The configuration file `config.toml` is in the install directory (created on installation, see [Configuration file](#configuration-file)) and maintained by the service; edit it as administrator
-- **Uninstalling** (Settings → Apps) stops and removes the service, the startup entry, `config.toml` and the program; nothing is left behind (see [Uninstalling](#uninstalling)). Installing a new version over an old one keeps `config.toml`, and with it the control code and My devices, even if you choose to uninstall the old version first
-- A bare `airhand.exe` doesn't run without being installed: release builds ask you to run the installer. Debug builds (`npm run tauri dev`) run the host inside the tray process, like on macOS and Linux, with `config.toml` next to the program (`client/src-tauri/target/debug/`)
+- **Uninstalling** (Settings → Apps) stops and removes the service, the startup entry, `config.toml` and the program; nothing is left behind (you choose whether the virtual display driver goes too, see [Uninstalling](#uninstalling)). Installing a new version over an old one keeps `config.toml`, and with it the control code and My devices, even if you choose to uninstall the old version first
+- **Virtual display driver**: the first install asks whether to install it, see [Virtual display](#virtual-display) below
+
+### Just for me
+
+- The host runs inside the tray process: after **Quit** in the tray the computer can't be controlled, but it keeps running while the console is open, the same as when installed for all users. The top of the tray menu says "Installed just for you"
+- **Start when you sign in** (tray menu, on by default): Airhand starts by itself after you sign in. If you disabled Airhand under Startup apps in Task Manager, the tick in the tray menu doesn't follow it: turn it off and on again in the menu to bring it back
+- The configuration file `config.toml` is in the install directory too (see [Configuration file](#configuration-file)), maintained by the tray; you can edit it directly
+- Uninstalling and upgrading work the same as for all users (see [Uninstalling](#uninstalling))
+- If someone else then installs Airhand for all users, the copy installed just for you stops running (two hosts would run at the same time) and no longer starts when you sign in, and asks whether to uninstall it. This also happens while it's running: its host stops as soon as it notices
+
+### Virtual display
+
+When installing for all users, the installer asks whether to install the **virtual display driver** (from the open-source [Virtual Display Driver](https://github.com/VirtualDrivers/Virtual-Display-Driver) project, MIT license, shipped with the installer). It stays disabled and shows nothing; the host only turns it on for these two things:
+
+- **Remote control with the monitor switched off**: many monitors (DisplayPort ones especially) disappear from Windows when switched off, leaving no desktop to capture. With the driver, whenever a controller is connected and no monitor is on the desktop (switched off, unplugged, or none at all), Airhand turns on a virtual display at the resolution of the monitor that was there; the controller's picture moves to it a few seconds later. It turns off again once a monitor is back, or 30 seconds after the last controller disconnects
+- **Privacy mode**: when a controller turns it on, all of this computer's monitors go blank (no signal) and its keyboard and mouse stop working, so only the controller can see and control it (see [Privacy mode](#privacy-mode) for controllers)
+
+Also, while a controller is connected Windows doesn't turn the screen off or go to sleep for lack of keyboard and mouse activity (this part doesn't need the driver): with the screen off the picture freezes, and on computers with Modern Standby, screen off means standby and the connection drops. Closing a laptop's lid or pressing the power button still puts it to sleep; to control a laptop with its lid closed, choose "Do nothing" under Power Options → Choose what closing the lid does.
+
+- **Installing**: asked once on the first install for all users (not again on upgrades). After you choose Yes, Windows may also ask whether to install device software from "SignPath Foundation" (the driver isn't signed by Microsoft): choose Install. If you skipped it, run `"C:\Program Files\Airhand\airhand.exe" --install-vdd` as administrator later (then quit Airhand from the tray and open it again); it isn't available when installed just for you (turning the device on and off needs administrator rights)
+- **Uninstalling**: uninstalling Airhand has a page with "Also remove the virtual display driver", unticked by default (if you keep it, reinstalling doesn't need it again). It's disabled either way, so no extra display is left. You can remove a kept driver later in Device Manager under "Display adapters" (tick "Delete the driver software for this device")
+- If another program (Sunshine, for example) already installed a Virtual Display Driver on this computer, Airhand leaves it alone, and neither of the above is available
+- The driver's settings are in `%ProgramData%\Airhand\VirtualDisplay`, maintained by Airhand
+
+A bare `airhand.exe` doesn't run without being installed: release builds ask you to run the installer. Debug builds (`npm run tauri dev`) run the host inside the tray process, like on macOS and Linux, with `config.toml` next to the program (`client/src-tauri/target/debug/`)
 
 ## Configuration file
 
@@ -40,7 +88,7 @@ Everything Airhand saves is in one `config.toml` (with comments). The menu in th
 
 | System | Location |
 |---|---|
-| Windows | The install directory: `C:\Program Files\Airhand\config.toml` (next to the program for debug builds that aren't installed) |
+| Windows | The install directory: `C:\Program Files\Airhand\config.toml`, or `%LOCALAPPDATA%\Programs\Airhand\config.toml` when installed just for you (next to the program for debug builds that aren't installed) |
 | macOS | `~/Library/Application Support/app.airhand.client/config.toml` |
 | Linux | `$XDG_CONFIG_HOME/airhand/config.toml`, by default `~/.config/airhand/config.toml` |
 
@@ -49,8 +97,11 @@ Everything Airhand saves is in one `config.toml` (with comments). The menu in th
 | `server` | Relay server `host:port`; without it, the address built into the program |
 | `server_fp` | Relay certificate fingerprint; `""` means no fixed fingerprint: the server's certificate is remembered on the first connection (`[server_trust]`) and a different one is refused later; without it, the built-in fingerprint |
 | `[server_trust]` | Written by Airhand: the relay's certificate fingerprint remembered on the first connection (when no fingerprint is set). Delete it if the relay really gets a new certificate |
-| `autostart` | Windows: start with Windows (also in the tray menu). macOS: a record of Open at login; System Settings is what counts, so editing only this line has no effect. Without it, Open at login hasn't been turned on by default yet (see above) |
-| `language` | UI language, `"zh"` or `"en"`: written when you pick one in the tray menu or the console (see [Language](#language)). Without it, the system language. On Windows it applies to every account on the computer (the file is shared) |
+| `autostart` | Windows: start with Windows, or when you sign in when installed just for you (also in the tray menu). macOS: a record of Open at login; System Settings is what counts, so editing only this line has no effect. Without it, Open at login hasn't been turned on by default yet (see above) |
+| `language` | UI language, `"zh"` or `"en"`: written when you pick one in the tray menu or the console (see [Language](#language)). Without it, the system language. On Windows installed for all users it applies to every account on the computer (the file is shared) |
+| `privacy_mode` | Windows, macOS: whether controllers may turn on [privacy mode](#privacy-mode), `true` by default. It isn't in the file by default: add `privacy_mode = false` to keep others from turning it on |
+| `lock_on_end` | Lock the screen when the remote control ends (see [Host](#host-default)): written when you switch **Lock screen when remote control ends** in the tray menu. Without it the screen is locked (`true`) |
+| `prevent_sleep` | macOS: prevent automatic sleeping (see "Lock screen and sleep" under [Host](#host-default)): written when you switch **Prevent automatic sleeping** in the menu bar icon's menu. On a power adapter the Mac then doesn't sleep when idle or with the lid closed. Without it the Mac sleeps as usual (`false`) |
 | `[code]` | This computer's control code, and the secret that gets it back. Delete `code` and `secret` to get a new code |
 | `[host]` | Maintained by Airhand: this computer's end-to-end identity as a host (`key`), the pairing code and whether pairing is paused, all stored encrypted. Deleting `key` creates a new identity: controllers that connected before will warn that this computer's identity changed |
 | `[[paired]]` | Maintained by Airhand: paired controllers (public key, name, when they paired); they connect without the pairing code. Delete an entry to forget that controller |
@@ -59,7 +110,7 @@ Everything Airhand saves is in one `config.toml` (with comments). The menu in th
 
 - Restart Airhand after changing settings (Quit, then open it again). Airhand keeps your edits and comments when it saves the code or devices
 - **Deleted by accident** (the file or the whole directory): it's recreated with the default settings at startup, and within a few seconds while running. This computer's control code, the autostart setting (on macOS, the record of Open at login), the UI language, the end-to-end identities, the paired controllers and My devices carry over from before the deletion, so nothing is lost; other settings go back to their defaults
-- A control code is enough to control its computer, so treat it like a key. On macOS / Linux only your account can read and write the file (mode 600, directory 700). On Windows the file is in the install directory, readable by every account on the computer: this computer's secret is encrypted with DPAPI for the SYSTEM account, and the codes in My devices with the Windows account that saved them, so other accounts and other computers can't read them (each account on the same computer only sees its own devices)
+- A control code is enough to control its computer, so treat it like a key. On macOS / Linux only your account can read and write the file (mode 600, directory 700). On Windows the file is in the install directory, readable by every account on the computer when installed for all users: this computer's secret is encrypted with DPAPI for the SYSTEM account (your account when installed just for you), and the codes in My devices with the Windows account that saved them, so other accounts and other computers can't read them (each account on the same computer only sees its own devices)
 - Windows removes it when uninstalling; on macOS / Linux it stays after the program is removed (as is customary there), so remove it too, see [Uninstalling](#uninstalling)
 
 ## Uninstalling
@@ -68,7 +119,9 @@ After these steps nothing of Airhand is left on the computer (except two things 
 
 ### Windows
 
-Settings → Apps → Airhand → Uninstall. The uninstaller stops and removes the Airhand service and the startup entry, and deletes the install directory (including `config.toml`), the registry keys the installer wrote, the Windows Firewall rules added for `airhand.exe`, and the console's temporary directories. Nothing else to do by hand.
+Settings → Apps → Airhand → Uninstall. The uninstaller stops and removes the Airhand service (when installed just for you, it closes the tray instead) and the startup entry (including whether it was enabled or disabled under Startup apps in Task Manager; otherwise it would still be disabled after reinstalling), and deletes the install directory (including `config.toml`), the registry keys the installer wrote, the Windows Firewall rules added for `airhand.exe`, and the console's temporary directories. Nothing else to do by hand.
+
+If the [virtual display](#virtual-display) driver was installed, a page before the confirmation offers "Also remove the virtual display driver", unticked by default: unticked keeps the disabled driver (with the record that recognizes it, `HKLM\SOFTWARE\Airhand\VirtualDisplay`, and its settings in `%ProgramData%\Airhand\VirtualDisplay`) for a later reinstall; ticked removes it too.
 
 (Choosing "uninstall the old version first" during an upgrade isn't an uninstall: `config.toml` is kept, see [Windows installation](#windows-installation).)
 
@@ -151,7 +204,7 @@ sudo apt remove airhand     # stops the packaged app and releases its PipeWire m
 rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/airhand"  # remove this user's configuration and pairings
 ```
 
-There's no startup entry and no system permission to clean up on Linux. The tray icon's and the console's temporary directories (`$XDG_RUNTIME_DIR/airhand-run-*`, `/tmp/airhand-webview-*`) are deleted when Airhand quits; they're only left behind if the process was killed (they're cleaned up at the next start), and the system usually clears them when you log out or reboot. To remove them by hand: `rm -rf "$XDG_RUNTIME_DIR"/airhand-run-* /tmp/airhand-webview-*`.
+There's no startup entry and no system permission to clean up on Linux. The tray icon's and the console's temporary directories (`$XDG_RUNTIME_DIR/airhand-run-*`, `/tmp/airhand-webview-*`) are deleted when Airhand quits, and the FUSE mount holding files copied on the other side (`$XDG_RUNTIME_DIR/airhand-clip/<pid>`) is unmounted then too; they're only left behind if the process was killed (they're cleaned up at the next start), and the system usually clears them when you log out or reboot. To clean up by hand (unmount first, then delete): `fusermount3 -uz "$XDG_RUNTIME_DIR"/airhand-clip/* 2>/dev/null; rm -rf "$XDG_RUNTIME_DIR"/airhand-run-* "$XDG_RUNTIME_DIR"/airhand-clip /tmp/airhand-webview-*`.
 
 ### Android
 
@@ -159,7 +212,7 @@ Uninstall the app in the system: the settings, saved devices and this phone's co
 
 ## Controller
 
-Tray → **Switch to controller** opens the console. Closing the console window switches back to host mode. On Windows, double-click the Airhand tray icon or choose **Open console** from its menu. If the console is already open, double-clicking brings it to the front. The installed host service keeps running while the console is open.
+Tray → **Switch to controller** opens the console. Closing the console window switches back to host mode. On Windows, double-click the Airhand tray icon or choose **Open console** from its menu. If the console is already open, double-clicking brings it to the front. On Windows the host keeps running while the console is open (whether installed for all users or just for you), so the computer can still be controlled; on macOS and Linux switching to controller pauses the host until the console is closed.
 
 - It works like a browser: each computer gets a **tab** that you can drag to reorder and close (= disconnect) with × or a middle click. Click **+** for a new connection, enter the 6-digit control code (pasting `123 456` works), and once connected that tab becomes the computer. With two or more connections a **Multi-screen overview** tab appears on the left
 - **First connection to a computer or phone**: it asks for a pairing code (every host does), and the new-connection page shows a "Pairing code" field: enter the 6-digit pairing code shown there (a computer's tray menu, a phone's Share screen tab in Airhand) and connect again (or paste all 12 digits at once: control code + pairing code). Once paired, it remembers this console
@@ -167,7 +220,7 @@ Tray → **Switch to controller** opens the console. Closing the console window 
 - **My devices**: computers you connect to are saved (in `config.toml`); next time, one click on the new-connection page connects with the quality settings you used last. Rename or remove them (with undo), and search when there are many. If one is offline, there's no error: its tab opens and waits, and connects as soon as it's back (using the saved reconnect token, which doesn't count as code guessing)
 - The window has no system title bar: drag an empty part of the tab bar to move it, double-click to maximize. The icon on the far left opens the menu: this computer's name, server status, language, switch to host. Closing the console while connections are open (including from the taskbar or Alt+F4) asks first
 - Shortcuts (when not controlling a computer): Ctrl+T new connection, Ctrl+W close tab, Ctrl+Tab / Ctrl+Shift+Tab switch tabs, Ctrl+1–9, Ctrl+Shift+T reopen the last closed connection. While the remote screen has focus, every key goes to the remote computer
-- Toolbar (like an address bar): remote name, control code, frame rate / bitrate / latency, encoder; monitor switch (when the remote computer has several, see [Multiple displays](#multiple-displays) below), **Quality**, shortcuts, clipboard (two-way sync / type as keystrokes), sound (mute / A/V sync), microphone (only when the remote computer can take it, see [Microphone](#microphone) below), mouse (see [Mouse](#mouse) below), actual size (1:1), fullscreen, disconnect
+- Toolbar (like an address bar): remote name, control code, frame rate / bitrate / latency, encoder; monitor switch (when the remote computer has several, see [Multiple displays](#multiple-displays) below), **Quality**, shortcuts, clipboard (two-way sync / type as keystrokes), sound (mute / A/V sync), microphone (only when the remote computer can take it, see [Microphone](#microphone) below), privacy mode (Windows and Mac hosts only, see [Privacy mode](#privacy-mode) below), mouse (see [Mouse](#mouse) below), actual size (1:1), fullscreen, disconnect
 - When controlling a Mac, enable **Send shortcut → Swap Ctrl and ⌘ Command** to copy with Ctrl+C on a Windows keyboard and use the Win key as Control. The shortcuts in the menu are unchanged. The switch is off by default and remembered per device in the desktop console; the web console forgets it on refresh.
 - In fullscreen the tab bar is hidden and the toolbar slides in when the mouse touches the top edge; click the remote name to switch to another connection without leaving fullscreen. The console also tries to lock the keyboard, so system shortcuts such as the Win key and Alt+Tab go to the remote computer. On macOS fullscreen doesn't open a separate desktop Space, and the menu bar and Dock stay hidden (so they don't cover the toolbar or the remote taskbar; they come back while you're in another app); leave fullscreen with the toolbar button. The window's green button enters the system's own fullscreen, with the menu bar and Dock as usual
 - **Playing games**: the default Auto mode locks the mouse by itself when the remote computer hides its cursor (turning the camera in a game); on a computer you mostly play games on, switch to Game mode, see [Mouse](#mouse) below
@@ -236,6 +289,18 @@ Send this computer's microphone to the remote computer: programs there (meetings
 - Only one controller at a time: another controller sees "Another controller is using the remote microphone" and takes over when that one stops
 - **macOS 14.2+ and Linux with PipeWire** publish **Airhand Microphone** when forwarding starts. Choose it as the input in the remote app. macOS may ask for permission for that app to record system audio. Turning forwarding off or disconnecting removes the device. PipeWire also removes it when Airhand exits. After a forced quit on Mac, reopening Airhand or choosing **Uninstall Airhand…** cleans up any leftover device and tap.
 - Android hosts and the native Android controller do not yet support microphone forwarding.
+
+### Privacy mode
+
+Keeps the people at the remote computer from seeing what you do: all of its monitors go blank and its keyboard and mouse stop working, so only you can see and control it. Toolbar shield button → **Privacy mode**; on a phone (Android, iPhone / iPad) it's the round button on the edge of the picture → **Privacy mode**, with the current state under the switch.
+
+- Windows hosts have to be installed for all users with the [virtual display](#virtual-display) driver; Mac hosts have to allow Airhand Accessibility (which controlling their keyboard and mouse needs anyway). Otherwise the switch is greyed out and the menu says why. There's no such button for Linux and phones
+- **Windows**: turning it on switches the remote computer to a virtual display (at the resolution of its main monitor), the only display left on its desktop, with its own monitors taken off (no signal); this takes a few seconds. You see and control that virtual display. The Start menu, UAC prompts, the lock screen and the mouse pointer are all on it too, nothing shows on the remote monitors. The remote keyboard and mouse are blocked, except Ctrl+Alt+Del (Windows' secure attention sequence): it only switches to the secure desktop, which doesn't show on the remote monitors either
+- **Mac**: it's on right away, and you keep seeing and controlling the Mac's own displays, unchanged; at the Mac they go fully black (the backlight stays on), with a black window over each of them as well (only your side doesn't see it). The remote keyboard, mouse and trackpad (media keys and gestures included) are blocked. For what it can't block, see [Known limitations](limitations.md#macos)
+- One switch per computer: several connected controllers see the same state, and any of them can turn it off
+- **Turns off by itself** when the remote control ends (right away when you disconnect; after 30 seconds if your connection dropped and didn't come back), locking the screen first and then bringing the remote monitors back, so they come back showing the lock screen (no locking if **Lock screen when remote control ends** is unchecked in the remote tray menu, see [Host](#host-default)). When a connection drops and comes back, the console asks for it as part of reconnecting, so the remote screen doesn't show in between
+- Someone at the remote computer can end it by disconnecting that computer from the network (the session drops after about a minute, and privacy mode with it, leaving the screen locked) or by restarting it (on Windows Airhand restores the monitors when it starts; on a Mac they come back as soon as Airhand quits)
+- To keep others from turning it on for a computer, add `privacy_mode = false` to its `config.toml` (see [Configuration file](#configuration-file))
 
 ## Language
 

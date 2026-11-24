@@ -34,6 +34,8 @@ See [How it works → Video](docs/architecture.md#video) for details.
 ## Features
 
 - **Windows system service**: the lock screen, the sign-in screen and UAC prompts can be seen and controlled, and the computer can be reached after boot, before anyone signs in
+- **Works with the monitor off** (Windows): when the host's monitor is switched off (or there's none), a virtual display fills in automatically; while a controller is connected the screen doesn't turn off and the computer doesn't sleep. On a Mac the same goes for a closed laptop lid (on a power adapter) or a Mac mini with no display
+- **Privacy mode** (Windows, macOS): with one click the remote computer's monitors all go blank and its keyboard and mouse stop working, so only you can see and control it; it ends by itself after you disconnect, with the remote screen locked first
 - **Fixed control codes**: they survive restarts, upgrades and even server restarts until you change them yourself
 - **Console**: browser-style tabs to control several computers at once, plus a multi-screen overview to watch them all. Computers you've connected to are saved and reconnect with one click; if one is offline, it connects as soon as it comes back
 - **Web console**: the controller can also run in Docker and be used from a browser, with nothing to install on the computer you control from
@@ -42,14 +44,14 @@ See [How it works → Video](docs/architecture.md#video) for details.
 - **Audio**: the host's system audio plays on the controller (Opus + adaptive jitter buffer), with optional A/V sync for watching videos. The other way, the controller can send its microphone to meeting apps and voice typing on Windows, macOS 14.2+ and Linux (PipeWire) hosts. Mac and Linux hosts publish **Airhand Microphone** while forwarding is on
 - **Handy tools**: two-way clipboard sync (text, plus files and folders, sent when you paste), typing the clipboard as keystrokes, system shortcuts (Win, Alt+Tab, Ctrl+Shift+Esc…), multiple monitors (switch between them, show and control several at once, or give each its own window to put on your own screens in full screen), keyboard lock in fullscreen, quality presets
 - **Secure by default**: sessions are end-to-end encrypted, so the relay server can't see the screen or keystrokes; the first connection needs the pairing code from the other computer's tray (it never goes through the server), and its identity is recognized afterwards; TLS 1.3 with certificate pinning, brute-force protection for control codes; the host always sees who is connected and can disconnect them with one click
-- **Leaves nothing behind**: the host is just a tray icon and doesn't start a WebView; everything worth keeping is in one `config.toml`, other runtime files are deleted on exit, and nothing is left after [uninstalling](docs/usage.md#uninstalling) (Windows has an uninstaller, macOS has "Uninstall Airhand…" in the menu, Linux takes two commands)
+- **Leaves nothing behind**: the host is just a tray icon and doesn't start a WebView; everything worth keeping is in one `config.toml`, other runtime files are deleted on exit, and nothing is left after [uninstalling](docs/usage.md#uninstalling) (Windows has an uninstaller, where you choose whether the virtual display driver goes too; macOS has "Uninstall Airhand…" in the menu, Linux takes two commands)
 - **English and Chinese**: follows the system language; notices from the other computer and the server also appear in **your** language
 
 ## Platforms
 
 | Platform | Host | Controller | Notes |
 |---|:-:|:-:|---|
-| Windows 10 / 11 | ✅ | ✅ | Installed; the host runs as a system service |
+| Windows 10 / 11 | ✅ | ✅ | Installed; for all users the host runs as a system service |
 | macOS 13+ | ✅ | ✅ | The host needs the Screen & System Audio Recording and Accessibility permissions |
 | Linux | ✅ | ✅ | The host supports X11 desktops only, with software encoding for now |
 | Android 7+ phones / tablets | ✅ | ✅ | Can only be watched until the accessibility service is turned on; the controller connects to one device at a time |
@@ -127,7 +129,7 @@ The server address and fingerprint can also be changed later in [`config.toml`](
 
 ### 3. Connect
 
-1. Install Airhand on both computers (on Windows run the installer, which needs administrator rights; on macOS grant the permissions it asks for the first time)
+1. Install Airhand on both computers (on Windows run the installer: installing for all users needs administrator rights, installing just for yourself doesn't but can't control the lock screen and UAC prompts; on macOS grant the permissions it asks for the first time)
 2. On the computer **to be controlled**, right-click the tray icon (on macOS, click the menu bar icon) to see its 6-digit **control code**
 3. On **your** computer, choose **Open console** from the tray menu (**Switch to controller** on macOS / Linux) and enter the code. The first time you connect to that computer, also enter the 6-digit **pairing code** from its tray menu; after that it isn't needed
 

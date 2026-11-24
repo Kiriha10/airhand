@@ -182,6 +182,9 @@
     <string name="nav_keys_desc">在画面下方显示返回、主页、最近任务</string>
     <string name="local_cursor">拖动窗口时显示本地光标</string>
     <string name="local_cursor_desc">对方拖动、缩放窗口时会把光标画进画面里。打开时照样画本机的光标，跟手不延迟；关闭时只看画面里的那个</string>
+    <string name="reverse_wheel">反转鼠标滚轮</string>
+    <string name="reverse_wheel_desc">外接鼠标的滚轮往反方向滚，屏幕上的双指滑动不变</string>
+    <string name="wheel_speed">鼠标滚轮速度</string>
     <string name="settings_data">数据</string>
     <string name="clear_devices">清除已保存的设备</string>
     <string name="clear_devices_desc">共 %1$d 台</string>
@@ -223,6 +226,8 @@
     <string name="audio_playback_failed">无法播放声音：%1$s</string>
     <string name="menu_keyboard">键盘</string>
     <string name="menu_shortcuts">快捷键</string>
+    <string name="swap_ctrl_command">互换 Ctrl 和 ⌘ Command</string>
+    <string name="swap_ctrl_command_desc">外接键盘的 Ctrl 当 ⌘ 用，Win 键当 Ctrl 用；键盘上方的特殊键和下面的快捷键不变。这台电脑会记住</string>
     <string name="menu_sound_on">声音：开</string>
     <string name="menu_sound_off">声音：关</string>
     <string name="menu_mouse_lock_on">锁定鼠标：开</string>
@@ -242,6 +247,21 @@
     <string name="clipboard_sent">已发送到对方的剪贴板</string>
     <string name="clipboard_type">作为键盘输入发送</string>
     <string name="clipboard_type_desc">直接把本机复制的文字打到对方当前的输入框里</string>
+
+    <!-- 防窥模式（Windows、Mac 被控端）：对方的显示器黑屏、键盘鼠标不起作用，只有你看得到、操作得了 -->
+    <string name="menu_privacy_on">防窥模式：开</string>
+    <string name="menu_privacy_off">防窥模式：关</string>
+    <string name="privacy_toggle">防窥模式</string>
+    <string name="privacy_off">打开后，对方电脑的显示器全部黑屏、键盘鼠标不起作用，只有你看得到、操作得了（画面换成一块虚拟显示器）。断开连接后自动恢复</string>
+    <string name="privacy_off_mac">打开后，对方 Mac 的显示器全部黑屏、键盘鼠标和触控板不起作用，只有你看得到、操作得了。断开连接后自动恢复</string>
+    <string name="privacy_starting">正在打开：对方电脑正在换成虚拟显示器，要几秒钟</string>
+    <string name="privacy_starting_mac">正在打开</string>
+    <string name="privacy_on">已打开：对方的显示器全部黑屏、键盘鼠标不起作用。断开连接后自动恢复；断线时等你重连 30 秒，期间重连会接着保持</string>
+    <string name="privacy_failed">防窥模式没能打开（%1$s），对方的屏幕已经恢复。可以再试一次</string>
+    <string name="privacy_unavailable">对方电脑用不了：需要为所有用户安装 Airhand，并在安装时装上虚拟显示器驱动</string>
+    <string name="privacy_unavailable_mac">对方 Mac 用不了：要先在那台 Mac 的“系统设置 → 隐私与安全性 → 辅助功能”里允许 Airhand（挡住它的键盘鼠标要用到）</string>
+    <string name="privacy_not_allowed">对方电脑的设置不允许防窥模式（config.toml 里的 privacy_mode）</string>
+    <string name="privacy_note">对方电脑前的人可以断开它的网络或者重启它来结束防窥模式</string>
 
     <!-- 游戏按键：控制电脑时叠在画面上的按钮和摇杆 -->
     <string name="menu_game">游戏按键</string>

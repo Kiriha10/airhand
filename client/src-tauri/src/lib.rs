@@ -1,9 +1,11 @@
 //! Airhand 客户端：同一个二进制既是被控端也是控制端。
 //!
 //! * 启动后默认是**被控端**：只有托盘图标，没有任何窗口；
-//! * 托盘菜单可切换为**控制端**：打开现代化控制台，可同时控制多台电脑；
-//! * Windows 需要安装：被控端作为系统服务运行（见 `winsvc`），托盘只负责显示和操作；
-//!   调试构建直接运行时被控端在本进程里运行。macOS / Linux 的被控端一直在本进程里运行；
+//! * 托盘菜单可切换为**控制端**：打开现代化控制台，可同时控制多台电脑。Windows 上打开控制台时被控端照常运行，
+//!   macOS / Linux 上被控端暂停、关掉控制台再恢复（见 [`status::HOST_WITH_CONSOLE`]）；
+//! * Windows 需要安装：为所有用户安装时被控端作为系统服务运行（见 `winsvc`），托盘只负责显示和操作；
+//!   仅为当前用户安装时（见 `winsvc::user`）没有系统服务，和调试构建直接运行时一样，被控端在本进程里运行。
+//!   macOS / Linux 的被控端一直在本进程里运行；
 //! * macOS 的登录时自动启动是系统的登录项（见 [`login_item`]），第一次从"应用程序"文件夹运行时默认打开；
 //! * 配置和数据只有一个 `config.toml`（见 [`config`]）：服务器设置、本机的控制码、控制台的"我的设备"
 //!   （见 [`devices`]）。Windows 在安装目录，macOS 在 `~/Library/Application Support/app.airhand.client/`，
@@ -47,7 +49,7 @@ use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use tracing::{info, warn};
 
-use host::{HostCmd, HostService};
+use host::{HostCmd, HostCode, HostService};
 use i18n::Lang;
 use status::{HostStatus, Mode, StatusHub};
 
@@ -59,9 +61,12 @@ static EXITING: AtomicBool = AtomicBool::new(false);
 pub struct AppState {
     hub: StatusHub,
     services: Mutex<Services>,
+    /// 本机的控制码：本进程里的被控端停下再启动（macOS / Linux 打开、关掉控制台）时接着用它
+    host_code: HostCode,
     console_opening: AtomicBool,
     webview_dirs: Mutex<Vec<PathBuf>>,
     /// Windows 安装版：被控端在系统服务里运行（托盘只负责显示和操作），切换模式不影响它
+    #[cfg_attr(not(windows), allow(dead_code))]
     service_mode: bool,
     /// 控制台连过来的 WebSocket 地址（第一次要的时候开始监听，见 [`console`]）
     console: tokio::sync::OnceCell<String>,
@@ -104,6 +109,33 @@ impl Hosting {
         }
     }
 
+    /// 托盘菜单里切换"结束远程后锁屏"（见 `host::ending`）。`hub`：本进程里的被控端用的状态（就是托盘的）
+    fn set_lock_on_end(&self, hub: &StatusHub, on: bool) {
+        match self {
+            Hosting::InProcess(_) => {
+                let hub = hub.clone();
+                // 要写配置文件，不在主线程上做
+                std::thread::spawn(move || host::set_lock_on_end(&hub, on));
+            }
+            #[cfg(windows)]
+            Hosting::Service(link) => link.send(winsvc::ipc::ToAgent::SetLockOnEnd { on }),
+        }
+    }
+
+    /// 菜单里切换"不自动睡眠"（macOS，见 `host::power`）。`hub`：本进程里的被控端用的状态（就是托盘的）
+    fn set_prevent_sleep(&self, hub: &StatusHub, on: bool) {
+        match self {
+            Hosting::InProcess(_) => {
+                let hub = hub.clone();
+                // 要写配置文件，不在主线程上做
+                std::thread::spawn(move || host::set_prevent_sleep(&hub, on));
+            }
+            // 服务里的被控端没有这一项（`HostStatus::prevent_sleep` 是 `None`，菜单里不显示）
+            #[cfg(windows)]
+            Hosting::Service(_) => {}
+        }
+    }
+
     fn pairing(&self, cmd: PairingCmd) {
         match self {
             Hosting::InProcess(h) => {
@@ -125,29 +157,34 @@ impl Hosting {
 
 // ───────────────────────────── 模式切换 ─────────────────────────────
 
-/// 切换后台服务（不涉及窗口）。被控端在系统服务里运行时（Windows 安装版）只启停控制端。
+/// 切换后台服务（不涉及窗口）。Windows 上被控端一直运行（系统服务里，或者本进程里，见
+/// [`status::HOST_WITH_CONSOLE`]），只启停控制端；macOS / Linux 上本进程里的被控端和控制端轮流运行。
 fn switch_services(app: &AppHandle, mode: Mode) {
     let state = app.state::<AppState>();
     let current = state.hub.borrow().mode;
     if current != mode {
         info!(?mode, "switching mode");
-        let in_process = !state.service_mode;
+        // 被控端跟着模式启停（打开控制台时停下）
+        let host_follows = !status::HOST_WITH_CONSOLE;
         let mut sv = state.services.lock().unwrap();
         // 先停止旧服务（Drop 即中止并断开连接），再启动新服务
         sv.controller = None;
-        if in_process {
+        if host_follows {
             sv.host = None;
         }
         state.hub.send_modify(|s| {
             s.mode = mode;
             s.controller = ServerState::Connecting;
-            if in_process {
+            if host_follows {
                 s.host = HostStatus::default();
             }
         });
         match mode {
-            Mode::Host if in_process => {
-                sv.host = Some(Hosting::InProcess(HostService::start(state.hub.clone())));
+            Mode::Host if host_follows => {
+                sv.host = Some(Hosting::InProcess(HostService::start(
+                    state.hub.clone(),
+                    state.host_code.clone(),
+                )));
                 #[cfg(target_os = "macos")]
                 host::macos::request_permissions();
             }
@@ -350,6 +387,24 @@ pub(crate) fn on_menu(app: &AppHandle, id: &str) {
                 h.send(cmd);
             }
         }
+        "lock_on_end" => {
+            let state = app.state::<AppState>();
+            let current = state.hub.borrow().host.lock_on_end;
+            if let (Some(current), Some(h)) = (current, &state.services.lock().unwrap().host) {
+                h.set_lock_on_end(&state.hub, !current);
+            }
+            // 勾选项被点击时系统会自动翻转勾选状态：先按原来的设置重建菜单，改好了（被控端确认后）再刷新
+            state.hub.send_modify(|_| {});
+        }
+        "prevent_sleep" => {
+            let state = app.state::<AppState>();
+            let current = state.hub.borrow().host.prevent_sleep;
+            if let (Some(current), Some(h)) = (current, &state.services.lock().unwrap().host) {
+                h.set_prevent_sleep(&state.hub, !current);
+            }
+            // 同上：先按原来的设置重建菜单，改好了再刷新
+            state.hub.send_modify(|_| {});
+        }
         "new_pairing" | "forget_paired" => {
             let cmd = if id == "new_pairing" {
                 PairingCmd::NewCode
@@ -363,13 +418,31 @@ pub(crate) fn on_menu(app: &AppHandle, id: &str) {
         #[cfg(windows)]
         "autostart" => {
             let state = app.state::<AppState>();
-            let current = state.hub.borrow().service.map(|s| s.autostart);
-            if let (Some(current), Some(Hosting::Service(link))) =
-                (current, &state.services.lock().unwrap().host)
+            let (user, service) = {
+                let st = state.hub.borrow();
+                (st.user_autostart, st.service.map(|s| s.autostart))
+            };
+            if let Some(current) = user {
+                // 仅为当前用户安装：登录时自动启动是本用户的启动项，托盘自己改（先写配置文件：它为准）
+                let hub = state.hub.clone();
+                let on = !current;
+                std::thread::spawn(move || {
+                    match config::save_autostart(on)
+                        .and_then(|()| winsvc::user::choose_autostart(on))
+                    {
+                        Ok(()) => {
+                            info!(on, "autostart changed");
+                            hub.send_modify(|s| s.user_autostart = Some(on));
+                        }
+                        Err(e) => warn!("can't change autostart: {e:#}"),
+                    }
+                });
+            } else if let (Some(current), Some(Hosting::Service(link))) =
+                (service, &state.services.lock().unwrap().host)
             {
                 link.send(winsvc::ipc::ToAgent::SetAutostart { on: !current });
             }
-            // 勾选项被点击时系统会自动翻转勾选状态：重建菜单，以被控端确认后的设置为准
+            // 勾选项被点击时系统会自动翻转勾选状态：先按原来的设置重建菜单，改好了（被控端确认后）再刷新
             state.hub.send_modify(|_| {});
         }
         #[cfg(windows)]
@@ -609,26 +682,39 @@ async fn switch_to_host(app: AppHandle) -> Result<(), Problem> {
 // ───────────────────────────── 入口 ─────────────────────────────
 
 pub fn run() {
+    // Windows：安装程序给卸载程序的环境变量不往下传（见 winsvc::forget_installer_env）
+    #[cfg(windows)]
+    winsvc::forget_installer_env();
     // Windows：安装包和服务管理器用的命令行（--install、--service、--agent……）
     #[cfg(windows)]
     if let Some(code) = winsvc::cli() {
         std::process::exit(code);
     }
     init_logging();
-    let Some(_instance) = single_instance::acquire() else {
-        // 已经有一个实例在运行（托盘里），直接退出
-        return;
-    };
-    // Windows：安装好的 Airhand 由系统服务运行被控端；发布版必须安装，调试构建直接运行时被控端在本进程里运行
+    // Windows：为所有用户安装的 Airhand 由系统服务运行被控端；仅为当前用户安装的（没有系统服务）和调试构建直接运行时
+    // 一样，被控端在本进程里运行。发布版没有安装时不能运行，提示运行安装程序
     #[cfg(windows)]
     let service_mode = winsvc::installed_here();
+    #[cfg(windows)]
+    let user_install = !service_mode && winsvc::user::installed_here();
     #[cfg(all(windows, not(debug_assertions)))]
-    if !service_mode {
+    if !service_mode && !user_install {
         winsvc::show_not_installed();
+        return;
+    }
+    // 这台电脑（被别的用户）为所有用户安装了 Airhand：被控端在它的系统服务里运行，仅为当前用户安装的这一份让开
+    // （否则两个被控端同时运行）。在占用单实例之前检查：登录时两份一起启动的话，不能挡住为所有用户安装的那份托盘
+    #[cfg(windows)]
+    if user_install && winsvc::service_present() {
+        winsvc::user::step_aside();
         return;
     }
     #[cfg(not(windows))]
     let service_mode = false;
+    let Some(instance) = single_instance::acquire() else {
+        // 已经有一个实例在运行（托盘里），直接退出
+        return;
+    };
     // 配置文件由本进程维护（Windows 安装版由服务里的被控端维护，见 winsvc::agent）：
     // 不存在时按默认配置生成，运行中被删掉了也会重新生成
     if !service_mode {
@@ -637,6 +723,15 @@ pub fn run() {
         }
         config::keep_file();
     }
+    // 仅为当前用户安装：按 config.toml 设置登录时自动启动（手动改过配置文件的话以文件为准，也顺带更新程序的位置）
+    #[cfg(windows)]
+    let user_autostart = user_install.then(|| {
+        let on = config::settings().autostart;
+        if let Err(e) = winsvc::user::apply_autostart(on) {
+            warn!("can't apply the autostart setting: {e:#}");
+        }
+        on
+    });
     enable_dpi_awareness();
     // 先清理上次残留的目录，再创建本次的（同一个前缀）
     ephemeral::sweep_stale();
@@ -646,14 +741,20 @@ pub fn run() {
     }
     #[cfg(target_os = "linux")]
     ephemeral::isolate_caches();
+    // Linux：上次被强制结束时留下的剪贴板文件挂载点（FUSE）
+    #[cfg(target_os = "linux")]
+    clipfiles::linux::sweep_stale();
 
     let hub = status::new_hub();
+    #[cfg(windows)]
+    hub.send_modify(|s| s.user_autostart = user_autostart);
     #[cfg(target_os = "macos")]
     clipfiles::macos::init(&hub);
     let app = tauri::Builder::default()
         .manage(AppState {
             hub: hub.clone(),
             services: Mutex::default(),
+            host_code: HostCode::default(),
             console_opening: AtomicBool::new(false),
             webview_dirs: Mutex::default(),
             service_mode,
@@ -686,11 +787,18 @@ pub fn run() {
             }
             #[cfg(target_os = "linux")]
             exit_on_signals(handle.clone());
+            // Windows：安装包升级、卸载这一份 Airhand 时让托盘退出（见 winsvc::watch_quit）
+            #[cfg(windows)]
+            {
+                let h = handle.clone();
+                winsvc::watch_quit(move || h.exit(0));
+            }
             // 默认以被控端启动
             let hosting = if service_mode {
                 start_service_link(&handle, &hub)
             } else {
-                Hosting::InProcess(HostService::start(hub.clone()))
+                let code = app.state::<AppState>().host_code.clone();
+                Hosting::InProcess(HostService::start(hub.clone(), code))
             };
             app.state::<AppState>().services.lock().unwrap().host = Some(hosting);
             // 仅调试构建：方便开发时直接进入控制端
@@ -737,6 +845,16 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("can't initialize Tauri");
+    // 单实例一直占到进程退出。仅为当前用户安装时交给下面的检查：运行中别的用户为所有用户安装了 Airhand 的话，
+    // 这一份让开，那时提前放开
+    #[cfg(windows)]
+    let instance = if user_install {
+        watch_service_installed(app.handle().clone(), instance);
+        None
+    } else {
+        Some(instance)
+    };
+    let _instance = instance;
     // macOS：和其它平台一样启动后只有托盘（菜单栏）图标，程序坞里没有图标；打开控制台时才显示。
     // 打包的 .app 在 Info.plist 里声明了 LSUIElement，这里是给直接运行的可执行文件用的
     #[cfg(target_os = "macos")]
@@ -759,6 +877,10 @@ pub fn run() {
                 sv.host = None;
                 sv.controller = None;
             }
+            // 还有远程控制就当它结束了：先锁屏（见 host::ending），
+            // 再让虚拟显示器恢复原样（被控端在本进程里运行时；没用过它就什么也不做）
+            host::ending::shutdown();
+            host::virtual_display::shutdown();
             popout::close_all(app);
             if let Some(w) = app.get_webview_window(CONSOLE) {
                 let _ = w.destroy();
@@ -775,6 +897,9 @@ pub fn run() {
             if let Err(e) = host::mic::shutdown() {
                 warn!("stopping the virtual microphone: {e}");
             }
+            // Linux：对方复制的文件所在的 FUSE 文件系统。挂载在静态变量里，退出时不会自己卸
+            #[cfg(target_os = "linux")]
+            clipfiles::linux::shutdown();
             // Linux：托盘图标、GStreamer 缓存所在的目录（内存盘 XDG_RUNTIME_DIR 里），退出时删掉
             #[cfg(target_os = "linux")]
             ephemeral::remove_with_retry(&ephemeral::process_dir(), Duration::from_secs(1));
@@ -806,6 +931,48 @@ fn start_service_link(app: &AppHandle, hub: &StatusHub) -> Hosting {
     Hosting::Service(winsvc::ipc::AgentLink::start(hub.clone(), move || {
         app.exit(0)
     }))
+}
+
+/// Windows 仅为当前用户安装：每隔一会儿看看这台电脑是不是（被别的用户）为所有用户安装了 Airhand。
+/// 装了的话这一份让开（不能两个被控端同时运行），先把占着的、看得到的东西都放掉，再问用户要不要卸载这一份，然后退出：
+/// * 停下本进程里的被控端和控制端，不再写配置文件；
+/// * 关掉控制台、弹出窗口，拿掉托盘图标：被控端停了，菜单里的控制码、连接状态都不对了；
+/// * 放开单实例（`instance`）：问的时候为所有用户安装的那份托盘就能打开了（例如那边安装程序的完成页上点"运行 Airhand"）
+#[cfg(windows)]
+fn watch_service_installed(app: AppHandle, instance: single_instance::Guard) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(15));
+            if winsvc::service_present() {
+                break;
+            }
+        }
+        info!("Airhand got installed for all users, this copy steps aside");
+        // 关掉控制台时不要切回被控端（见 on_console_destroyed）
+        EXITING.store(true, Ordering::Release);
+        {
+            let state = app.state::<AppState>();
+            let mut sv = state.services.lock().unwrap();
+            sv.host = None;
+            sv.controller = None;
+        }
+        config::freeze();
+        // 窗口和托盘图标要在主线程上关，关完了再往下走（主线程卡住的话最多等几秒）
+        let (closed, wait) = std::sync::mpsc::channel();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            popout::close_all(&handle);
+            if let Some(w) = handle.get_webview_window(CONSOLE) {
+                let _ = w.destroy();
+            }
+            tray::remove(&handle);
+            let _ = closed.send(());
+        });
+        let _ = wait.recv_timeout(Duration::from_secs(5));
+        instance.release();
+        winsvc::user::step_aside();
+        app.exit(0);
+    });
 }
 
 #[cfg(not(windows))]

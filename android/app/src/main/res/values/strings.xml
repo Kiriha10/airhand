@@ -187,6 +187,10 @@
     <string name="nav_keys_desc">Back, Home and Recents below the screen when controlling a phone</string>
     <string name="local_cursor">Local cursor while dragging windows</string>
     <string name="local_cursor_desc">The other computer draws its cursor into the picture while a window is dragged or resized. On: still draw this device\'s cursor, which follows your finger with no delay. Off: show only the one in the picture</string>
+    <string name="reverse_wheel">Reverse mouse wheel</string>
+    <string name="reverse_wheel_desc">A connected mouse\'s wheel scrolls the other way. Two-finger scrolling on the screen doesn\'t change</string>
+    <string name="wheel_speed">Mouse wheel speed</string>
+    <string name="percent" translatable="false">%1$d%%</string>
     <string name="settings_data">Data</string>
     <string name="clear_devices">Clear saved devices</string>
     <string name="clear_devices_desc">%1$d saved</string>
@@ -228,6 +232,8 @@
     <string name="audio_playback_failed">Can\'t play the sound: %1$s</string>
     <string name="menu_keyboard">Keyboard</string>
     <string name="menu_shortcuts">Shortcuts</string>
+    <string name="swap_ctrl_command">Swap Ctrl and ⌘ Command</string>
+    <string name="swap_ctrl_command_desc">On a connected keyboard Ctrl works as ⌘ and the Win key as Control. The extra keys row and the shortcuts below don\'t change. Remembered for this computer</string>
     <string name="menu_sound_on">Sound on</string>
     <string name="menu_sound_off">Sound off</string>
     <string name="menu_mouse_lock_on">Mouse lock on</string>
@@ -247,6 +253,21 @@
     <string name="clipboard_sent">Sent to the remote clipboard</string>
     <string name="clipboard_type">Type it in</string>
     <string name="clipboard_type_desc">Types the text you copied into the focused field on the other side</string>
+
+    <!-- Privacy mode (Windows and Mac hosts): the remote monitors go blank and its keyboard and mouse stop working, only you see and control it -->
+    <string name="menu_privacy_on">Privacy mode on</string>
+    <string name="menu_privacy_off">Privacy mode off</string>
+    <string name="privacy_toggle">Privacy mode</string>
+    <string name="privacy_off">Blanks all of the remote computer\'s monitors and disables its keyboard and mouse, so only you can see and control it (the picture moves to a virtual display). Turns off by itself after you disconnect</string>
+    <string name="privacy_off_mac">Blanks all of the remote Mac\'s displays and disables its keyboard, mouse and trackpad, so only you can see and control it. Turns off by itself after you disconnect</string>
+    <string name="privacy_starting">Turning on: the remote computer is switching to a virtual display, this takes a few seconds</string>
+    <string name="privacy_starting_mac">Turning on</string>
+    <string name="privacy_on">On: the remote monitors are blank and its keyboard and mouse don\'t work. Turns off after you disconnect; if the connection drops it waits 30 seconds for you to reconnect and stays on if you do</string>
+    <string name="privacy_failed">Couldn\'t turn on privacy mode (%1$s), the remote screen is back to normal. You can try again</string>
+    <string name="privacy_unavailable">Not available on the remote computer: Airhand has to be installed for all users, together with the virtual display driver</string>
+    <string name="privacy_unavailable_mac">Not available on the remote Mac: someone at that Mac has to allow Airhand in System Settings → Privacy &amp; Security → Accessibility first (it\'s needed to block its keyboard and mouse)</string>
+    <string name="privacy_not_allowed">The remote computer\'s settings don\'t allow privacy mode (privacy_mode in config.toml)</string>
+    <string name="privacy_note">Someone at the remote computer can end privacy mode by disconnecting it from the network or restarting it</string>
 
     <!-- Game keys: buttons and a joystick over the picture when controlling a computer -->
     <string name="menu_game">Game keys</string>
