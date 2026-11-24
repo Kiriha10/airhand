@@ -274,7 +274,7 @@ export default {
   "privacy.failed": "没能打开（{detail}），对方的屏幕已经恢复。可以再试一次",
   "privacy.unavailable": "对方电脑当前的隐私屏方式不可用。请在被控端检查系统支持、图片模式设置或虚拟显示器驱动",
   "privacy.notAllowed": "对方电脑的设置不允许防窥模式（config.toml 里的 privacy_mode）",
-  "privacy.note": "图片由被控端本机设置；图片遮罩可在本机按 Ctrl+Alt+Shift+F12 关闭。也可断开连接后恢复",
+  "privacy.note": "Windows 图片模式由被控端本机选图，可在本机按 Ctrl+Alt+Shift+F12 关闭。也可断开连接后恢复",
   // 对方是 Mac：显示器调黑、盖上黑窗口，不换虚拟显示器（见 client/src-tauri/src/host/virtual_display/curtain.rs）
   "privacy.offMac": "打开后，对方 Mac 的显示器全部黑屏、键盘鼠标和触控板不起作用，只有你看得到、操作得了。断开连接后自动恢复",
   "privacy.startingMac": "正在打开",

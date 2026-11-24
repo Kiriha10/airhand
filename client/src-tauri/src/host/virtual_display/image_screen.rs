@@ -250,6 +250,20 @@ pub(super) fn spawn() -> std::io::Result<()> {
         .map(|_| ())
 }
 
+/// 最后一个会话结束后，ending 先锁屏再撤遮罩。这个安全桌面切换是正常结束，不能误报失败。
+fn finish_locked_session(secure: bool) -> bool {
+    if !secure {
+        return false;
+    }
+    let w = super::HUB.wants.lock().unwrap();
+    let ending = w.holders.is_empty() && w.linger.is_some();
+    drop(w);
+    if ending {
+        super::release_privacy();
+    }
+    ending
+}
+
 fn run() {
     let custom = SETTINGS.lock().unwrap().options.custom_image;
     let picture = if custom {
@@ -277,6 +291,9 @@ fn run() {
         };
         if stopping {
             break;
+        }
+        if on && finish_locked_session(crate::host::desktop::input_is_secure()) {
+            continue;
         }
         if on {
             let result = if let Some(c) = &mut covers {
@@ -398,10 +415,17 @@ mod tests {
         b.set_privacy(true);
         wait(PrivacyState::On);
         assert!(SETTINGS.lock().unwrap().options.active);
+        assert!(
+            !finish_locked_session(true),
+            "an active holder has not ended"
+        );
         drop(a);
         assert_eq!(super::super::HUB.privacy.borrow().state, PrivacyState::On);
         drop(b);
-        super::super::release_privacy();
+        assert!(
+            finish_locked_session(true),
+            "normal end locks before uncovering"
+        );
         wait(PrivacyState::Off);
         super::super::shutdown();
         assert!(!SETTINGS.lock().unwrap().options.active);

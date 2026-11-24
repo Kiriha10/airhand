@@ -265,7 +265,7 @@ const en: Record<MsgKey, Msg> = {
   "privacy.failed": "Couldn't turn it on ({detail}), the remote screen is back to normal. You can try again",
   "privacy.unavailable": "The selected privacy screen is unavailable. Check system support, image mode settings or the virtual display driver on the remote computer",
   "privacy.notAllowed": "The remote computer's settings don't allow privacy mode (privacy_mode in config.toml)",
-  "privacy.note": "The image is set on the remote computer. In image mode, Ctrl+Alt+Shift+F12 on that computer restores its screens. Disconnecting also restores them",
+  "privacy.note": "Windows image mode uses a picture chosen on the host. Ctrl+Alt+Shift+F12 on that computer restores its screens. Disconnecting also restores them",
   // The remote computer is a Mac: its displays are blanked and covered, no virtual display (see client/src-tauri/src/host/virtual_display/curtain.rs)
   "privacy.offMac": "Blanks all of the remote Mac's displays and disables its keyboard, mouse and trackpad, so only you can see and control it. Turns off by itself after you disconnect",
   "privacy.startingMac": "Turning on",
