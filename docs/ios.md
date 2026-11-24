@@ -83,6 +83,16 @@ TEAM_ID=<team id> EXPORT_METHOD=development AIRHAND_SERVER=... AIRHAND_SERVER_FP
 
 `EXPORT_METHOD` can also be `ad-hoc`, `app-store-connect` (TestFlight / App Store) or `enterprise`. For development, run `xcodegen generate` and open `ios/Airhand.xcodeproj`; a build phase compiles the Rust core (`ios/native`) for the current SDK with `scripts/build-rust.sh`.
 
+### Build an IPA with GitHub Actions
+
+The standalone [Build iOS IPA](../.github/workflows/ios.yml) workflow uses GitHub's hosted `xcode-27` runner to build for iPhone and iPad without a local Mac or Apple signing certificate.
+
+1. Set the repository variables `AIRHAND_SERVER` (relay address) and `AIRHAND_SERVER_FP` (relay certificate SHA-256 fingerprint) under **Settings → Secrets and variables → Actions → Variables**.
+2. Push changes to iOS, the shared Rust crates, or this workflow on `main` or `codex/privacy-image` to start a build. Once the workflow is on the default branch, **Actions → Build iOS IPA → Run workflow** can also build a selected branch. Until then, use **Re-run all jobs** on an existing run to retry.
+3. After a successful run, download `Airhand_iOS_<version>_<commit>` from **Artifacts**. It contains the IPA, `SHA256SUMS.txt`, and `build-info.json`, retained for 30 days. Full Xcode logs are uploaded separately as `ios-build-logs-*` for 14 days.
+
+The IPA is only ad-hoc signed and must be re-signed before installation as described below. This workflow does not upload to TestFlight or the App Store. The tag-triggered, all-platform `Release` workflow remains available.
+
 iOS only runs signed apps: use your developer account, Xcode with a free Apple ID (re-install every 7 days; if the App Group capability isn't available, remote control still works but sharing doesn't), or re-sign the unsigned IPA with tools like Sideloadly / AltStore (the app and its extension must share one App Group).
 
 ## How it works

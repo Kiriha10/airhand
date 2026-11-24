@@ -101,6 +101,16 @@ TEAM_ID=<团队 ID> EXPORT_METHOD=development AIRHAND_SERVER=... AIRHAND_SERVER_
 
 在 Xcode 里开发：`xcodegen generate` 之后打开 `ios/Airhand.xcodeproj`。编译时构建阶段会调用 `scripts/build-rust.sh` 按当前的 SDK 编译 Rust 核心（`ios/native`，静态库在 `ios/build/rust/<平台>/`）。
 
+### GitHub Actions 构建 IPA
+
+没有 Mac 时可使用独立工作流 [Build iOS IPA](../.github/workflows/ios.yml)，在 GitHub 托管的 `xcode-27` runner 上构建 iPhone / iPad 通用包，不需要先配置 Apple 证书。
+
+1. 仓库 **Settings → Secrets and variables → Actions → Variables** 中设置 `AIRHAND_SERVER`（中转服务器地址）和 `AIRHAND_SERVER_FP`（服务器证书 SHA-256 指纹）。这两个值不是 Apple 签名密钥。
+2. 将 iOS、共用 Rust 核心或本工作流的修改推送到 `main` 或 `codex/privacy-image`，自动启动构建。工作流合入默认分支后，也可以在 **Actions → Build iOS IPA → Run workflow** 选择要构建的分支手动启动；尚未合入时，可在已有执行中点 **Re-run all jobs** 重试。
+3. 等运行成功，在执行页面底部的 **Artifacts** 下载 `Airhand_iOS_<版本>_<提交>`，解压得到 `.ipa`、`SHA256SUMS.txt` 和 `build-info.json`。IPA 保存 30 天；完整 Xcode 日志另存为 `ios-build-logs-*`，保存 14 天。
+
+这个流程只做 ad-hoc 签名，产物需要按下文重新签名后安装；它不会上传 TestFlight 或 App Store。原有按版本标签构建所有平台的 `Release` 工作流继续可用。
+
 ### 安装
 
 iOS 只运行签过名的 App：

@@ -1,0 +1,121 @@
+name: Build iOS IPA
+run-name: iOS IPA · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/privacy-image]
+    paths:
+      - .github/workflows/ios.yml
+      - ios/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  AIRHAND_SERVER: ${{ vars.AIRHAND_SERVER }}
+  AIRHAND_SERVER_FP: ${{ vars.AIRHAND_SERVER_FP }}
+  CARGO_TERM_COLOR: always
+  XCODE_VERSION: "27.2"
+
+jobs:
+  build:
+    name: iPhone / iPad · unsigned IPA
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check relay settings
+        run: |
+          if [ -z "$AIRHAND_SERVER" ]; then
+            echo "::error::Set the repository variable AIRHAND_SERVER under Settings > Secrets and variables > Actions > Variables."
+            exit 1
+          fi
+          fp_digits="$(printf '%s' "$AIRHAND_SERVER_FP" | tr -d ' :\t\r\n')"
+          if [[ ! "$fp_digits" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+            echo "::error::Set AIRHAND_SERVER_FP to the relay certificate SHA-256 fingerprint (64 hexadecimal digits)."
+            exit 1
+          fi
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${XCODE_VERSION}.app"
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      - name: Build IPA
+        run: ios/scripts/build-ipa.sh 2>&1 | tee ios-build.log
+
+      - name: Collect IPA and build information
+        id: collect
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("ios/native/Cargo.toml", "rb"))["package"]["version"])')"
+          short_sha="${GITHUB_SHA:0:7}"
+          artifact="Airhand_iOS_${version}_${short_sha}"
+          mkdir -p dist
+          cp ios/build/Airhand.ipa "dist/Airhand_${version}_ios-unsigned_${short_sha}.ipa"
+          unzip -t "dist/Airhand_${version}_ios-unsigned_${short_sha}.ipa"
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          info = {
+              "commit": os.environ["GITHUB_SHA"],
+              "ref": os.environ["GITHUB_REF_NAME"],
+              "run": f'{os.environ["GITHUB_SERVER_URL"]}/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{os.environ["GITHUB_RUN_ID"]}',
+              "signing": "ad-hoc only; re-sign before installing on a device",
+              "architecture": "arm64",
+              "minimumIOS": "17.0",
+              "xcode": subprocess.check_output(["xcodebuild", "-version"], text=True).strip(),
+          }
+          Path("dist/build-info.json").write_text(json.dumps(info, indent=2) + "\n")
+          PY
+          (cd dist && shasum -a 256 *.ipa > SHA256SUMS.txt)
+          echo "artifact=$artifact" >> "$GITHUB_OUTPUT"
+          {
+            echo "### iOS / iPadOS IPA"
+            echo "- Source: \`$GITHUB_SHA\` (\`$GITHUB_REF_NAME\`)"
+            echo "- Download **$artifact** from this run's **Artifacts** section."
+            echo "- iPhone / iPad, arm64, iOS 17+."
+            echo "- Re-sign the IPA with your Apple ID / developer certificate before installing."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.collect.outputs.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-build-logs-${{ github.run_attempt }}
+          path: |
+            ios-build.log
+            ios/build/xcode-*.log
+          if-no-files-found: ignore
+          retention-days: 14
