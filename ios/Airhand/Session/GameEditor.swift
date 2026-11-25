@@ -12,13 +12,10 @@ struct GameEditor: View {
     @State private var layout: GameLayout
     @State private var history: [GameLayout] = []
     @State private var selected: UUID?
-    @State private var editing: UUID?
+    @State private var sheet: EditorSheet?
     @State private var dragStart: (UUID, CGPoint)?
     @State private var guides: (x: CGFloat?, y: CGFloat?) = (nil, nil)
     @State private var pinchBase: Double?
-    @State private var adding = false
-    @State private var picking = false
-    @State private var layoutSettings = false
     @State private var confirmDiscard = false
     @State private var toolbarOffset: CGSize = .zero
     @State private var toolbarDrag: CGSize = .zero
@@ -65,40 +62,52 @@ struct GameEditor: View {
             )
         }
         .preferredColorScheme(.dark)
-        .sheet(item: Binding(get: { editing.map { EditingID(id: $0) } }, set: { editing = $0?.id })) { e in
-            if let i = index(e.id) {
-                ItemSettings(item: Binding(get: { layout.items[min(i, layout.items.count - 1)] }, set: { v in
-                    if let j = index(e.id) { layout.items[j] = v }
-                }), os: os, duplicate: { duplicate(e.id) }, delete: { delete(e.id) }, willChange: snapshot)
-                .presentationDetents([.medium, .large])
+        .sheet(item: $sheet, content: sheetContent)
+    }
+
+    // 编辑器只发起一个 sheet；新增选项与选键在同一个 sheet 内切换，不交叠呈现与关闭。
+    private enum EditorSheet: Identifiable {
+        case add
+        case item(UUID)
+        case layoutSettings
+
+        var id: String {
+            switch self {
+            case .add: return "add"
+            case .item(let id): return id.uuidString
+            case .layoutSettings: return "layoutSettings"
             }
         }
-        .sheet(isPresented: $layoutSettings) {
-            LayoutSettings(layout: $layout, willChange: snapshot).presentationDetents([.medium])
-        }
-        .sheet(isPresented: $picking) {
-            KeyPicker(initial: [], os: os) { keys in
+    }
+
+    private func present(_ next: EditorSheet) {
+        guard sheet == nil, !confirmDiscard else { return }
+        sheet = next
+    }
+
+    @ViewBuilder private func sheetContent(_ route: EditorSheet) -> some View {
+        switch route {
+        case .add:
+            AddGameItemSheet(os: os) { item in
                 snapshot()
-                let item = GameTemplates.button(0.5, 0.5, 60, keys)
                 layout.items.append(item)
                 selected = item.id
             }
-        }
-        .confirmationDialog(L.t("game_add"), isPresented: $adding, titleVisibility: .visible) {
-            Button(L.t("game_key")) { picking = true }
-            Button(L.t("game_stick")) {
-                snapshot()
-                let s = GameTemplates.stick(0.2, 0.68, GameItem.wasd, sprint: "ShiftLeft")
-                layout.items.append(s)
-                selected = s.id
+        case .item(let id):
+            if let i = index(id) {
+                let item = layout.items[i]
+                ItemSettings(item: Binding(get: {
+                    // 删除后 sheet 关闭动画仍可能读取 binding，用已有项目副本避免越界。
+                    layout.items.first { $0.id == id } ?? item
+                }, set: { v in
+                    if let j = index(id) { layout.items[j] = v }
+                }), os: os, duplicate: { duplicate(id) }, delete: { delete(id) }, willChange: snapshot)
+                .presentationDetents([.medium, .large])
             }
+        case .layoutSettings:
+            LayoutSettings(layout: $layout, willChange: snapshot).presentationDetents([.medium])
         }
-        .confirmationDialog(L.t("game_discard_title"), isPresented: $confirmDiscard, titleVisibility: .visible) {
-            Button(L.t("game_discard"), role: .destructive) { done() }
-        } message: { Text(L.t("game_discard_text")) }
     }
-
-    private struct EditingID: Identifiable { let id: UUID }
 
     private func index(_ id: UUID) -> Int? { layout.items.firstIndex { $0.id == id } }
 
@@ -163,7 +172,7 @@ struct GameEditor: View {
         )
         .onTapGesture {
             selected = item.id
-            editing = item.id
+            present(.item(item.id))
         }
     }
 
@@ -206,13 +215,16 @@ struct GameEditor: View {
             tool("arrow.uturn.backward", L.t("undo"), enabled: !history.isEmpty) {
                 if let last = history.popLast() { layout = last }
             }
-            tool("plus", L.t("game_add")) { adding = true }
-            tool("slider.horizontal.3", L.t("game_layout_settings")) { layoutSettings = true }
+            tool("plus", L.t("game_add")) { present(.add) }
+            tool("slider.horizontal.3", L.t("game_layout_settings")) { present(.layoutSettings) }
             Divider().frame(height: 24).overlay(Theme.stroke)
             Button(L.t("cancel")) {
                 if layout != original { confirmDiscard = true } else { done() }
             }
             .font(.subheadline.weight(.semibold)).foregroundStyle(Theme.sub).padding(.horizontal, 8)
+            .confirmationDialog(L.t("game_discard_title"), isPresented: $confirmDiscard, titleVisibility: .visible) {
+                Button(L.t("game_discard"), role: .destructive) { done() }
+            } message: { Text(L.t("game_discard_text")) }
             Button(L.t("done")) {
                 app.games.update(layout)
                 done()
@@ -246,14 +258,64 @@ struct GameEditor: View {
         c.y = min(c.y + 0.06, 0.95)
         layout.items.append(c)
         selected = c.id
-        editing = nil
+        sheet = nil
     }
 
     private func delete(_ id: UUID) {
         snapshot()
         layout.items.removeAll { $0.id == id }
         selected = nil
-        editing = nil
+        sheet = nil
+    }
+}
+
+/// 在一个 sheet 内先选择类型，再选按键；取消不会修改布局。
+private struct AddGameItemSheet: View {
+    let os: OsKind
+    let added: (GameItem) -> Void
+    @State private var picking = false
+    @State private var committed = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            if picking {
+                KeyPicker(initial: [], os: os) { keys in
+                    commit(GameTemplates.button(0.5, 0.5, 60, keys))
+                }
+            } else {
+                NavigationStack {
+                    Form {
+                        Button { picking = true } label: {
+                            Label(L.t("game_key"), systemImage: "keyboard")
+                        }
+                        Button {
+                            commit(GameTemplates.stick(0.2, 0.68, GameItem.wasd, sprint: "ShiftLeft"))
+                            dismiss()
+                        } label: {
+                            Label(L.t("game_stick"), systemImage: "gamecontroller")
+                        }
+                    }
+                    .scrollContentBackground(.hidden)
+                    .background(Theme.bg)
+                    .navigationTitle(L.t("game_add"))
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button(L.t("cancel")) { dismiss() }
+                        }
+                    }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+        .presentationDetents(picking ? [.large] : [.medium, .large])
+    }
+
+    private func commit(_ item: GameItem) {
+        guard !committed else { return }
+        committed = true
+        added(item)
     }
 }
 
