@@ -38,6 +38,10 @@ pub enum Problem {
     NotConnected,
     /// 控制码不是 6 位数字
     InvalidCode,
+    /// LAN connections accept a numeric private/local IP, optionally followed by a UDP port.
+    InvalidLanAddress,
+    /// The local device did not respond; the relay connection is irrelevant.
+    LanUnreachable { detail: String },
     /// 控制码不存在或对方不在线
     CodeNotFound,
     /// 尝试过于频繁：猜错控制码太多次、短时间内向同一台被控端发起了太多次连接（服务器限速）。过一会儿再试，不自动重连
@@ -141,6 +145,12 @@ impl fmt::Display for Problem {
             Problem::ServerLost { detail } => write!(f, "lost connection to the server: {detail}"),
             Problem::NotConnected => f.write_str("not connected to the server yet"),
             Problem::InvalidCode => f.write_str("the control code must be 6 digits"),
+            Problem::InvalidLanAddress => {
+                f.write_str("enter a local IP address, optionally with a port")
+            }
+            Problem::LanUnreachable { detail } => {
+                write!(f, "can't connect to the LAN device: {detail}")
+            }
             Problem::CodeNotFound => f.write_str("control code not found, or the host is offline"),
             Problem::RateLimited => f.write_str("too many attempts"),
             Problem::HostBusy => f.write_str("the host has reached its session limit"),

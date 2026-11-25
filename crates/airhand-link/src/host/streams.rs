@@ -382,7 +382,11 @@ impl HostStreams {
             .unzip();
         let (audio_tx, audio_rx) = mpsc::channel(audio_queue);
         // 两条路：直连通了由直连任务接上，画面、声音走哪条也由它决定（没有直连时一直是中转）
-        let paths = Paths::new(conn.clone());
+        let paths = if inc.lan {
+            Paths::lan(conn.clone())
+        } else {
+            Paths::new(conn.clone())
+        };
         let writer = OwnedTask(tokio::spawn(write_all(Writers {
             session_id,
             paths: paths.clone(),
@@ -395,7 +399,7 @@ impl HostStreams {
         // 控制端的控制通道握手时已经等到了的（Noise_XX）先放进去，没等到的（Noise_IK）之后从信箱来
         let mut control = Merge::new(SessionLane::Control, r.opener, inbox.control);
         if let Some(s) = control_in {
-            control.add(s, Via::Relay)?;
+            control.add(s, if inc.lan { Via::Direct } else { Via::Relay })?;
         }
         let bulk = Merge::new(SessionLane::Bulk, secured.bulk.opener, inbox.bulk);
         let capacity = 4 * 1024 * 1024 / SessionLane::Control.max_frame_size();

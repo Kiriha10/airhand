@@ -378,6 +378,11 @@ FunctionEnd
   ${EndIf}
   ; 虚拟显示器驱动（见文件开头）：启动服务之前装好、停用好
   ${If} $MultiUser.InstallMode == "AllUsers"
+    ; Standalone LAN control is limited to the private profile and the local subnet.
+    nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall delete rule name="Airhand LAN" program="$INSTDIR\${MAINBINARYNAME}.exe"'
+    Pop $0
+    nsExec::ExecToLog '"$SYSDIR\netsh.exe" advfirewall firewall add rule name="Airhand LAN" dir=in action=allow protocol=UDP localport=4434 program="$INSTDIR\${MAINBINARYNAME}.exe" profile=private remoteip=LocalSubnet'
+    Pop $0
     ReadRegStr $0 HKLM "${AIRHAND_VDDKEY}" "Instance"
     ${If} $0 != ""
       DetailPrint "Updating the virtual display driver…"

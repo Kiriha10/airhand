@@ -31,6 +31,8 @@ object Messages {
         "serverLost" -> R.string.problem_server_lost
         "notConnected" -> R.string.problem_not_connected
         "invalidCode" -> R.string.problem_invalid_code
+        "invalidLanAddress" -> R.string.problem_invalid_lan_address
+        "lanUnreachable" -> R.string.problem_lan_unreachable
         "codeNotFound" -> R.string.problem_code_not_found
         "rateLimited" -> R.string.problem_rate_limited
         "hostBusy" -> R.string.problem_host_busy

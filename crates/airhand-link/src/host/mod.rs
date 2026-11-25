@@ -97,6 +97,8 @@ pub trait HostEvents: Send + Sync + 'static {
 
 /// 有控制端要连进来（交给 `run` 的 `session`）
 pub struct Incoming {
+    /// Standalone local connection whose lifetime does not depend on a relay.
+    pub lan: bool,
     pub conn: Connection,
     /// 这条服务器连接上的会话的通道、数据报从这里来
     pub router: Arc<Router>,
@@ -245,6 +247,7 @@ where
                 Some(ServerMsg::Incoming { session_id, peer, observed, init }) => {
                     info!(session_id, name = %peer.name, ip = %peer.ip, "controller wants to connect");
                     let run = session(Incoming {
+                        lan: false,
                         conn: sig.conn.clone(),
                         router: router.clone(),
                         session_id,

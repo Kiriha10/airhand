@@ -427,6 +427,23 @@ fn host_items(app: &AppHandle, menu: &Menu<Wry>, st: &AppStatus) -> tauri::Resul
     {
         #[cfg(target_os = "macos")]
         permission_items(app, menu)?;
+        if !st.host.lan_addresses.is_empty() {
+            let local = Submenu::new(
+                app,
+                tr!("局域网连接（无需中转）", "LAN connection (no relay needed)"),
+                true,
+            )?;
+            for (index, address) in st.host.lan_addresses.iter().take(8).enumerate() {
+                local.append(&MenuItem::with_id(
+                    app,
+                    format!("copy_lan_{index}"),
+                    address,
+                    true,
+                    None::<&str>,
+                )?)?;
+            }
+            menu.append(&local)?;
+        }
         if let (ServerState::Connected, Some(code)) = (&st.host.server, st.host.code) {
             let code = airhand_proto::format_code(code);
             menu.append(&label(app, tr!("控制码：{code}", "Control code: {code}"))?)?;
@@ -443,8 +460,8 @@ fn host_items(app: &AppHandle, menu: &Menu<Wry>, st: &AppStatus) -> tauri::Resul
                     "Change control code (old code stops working, all pairings are revoked)"
                 ),
             )?)?;
-            pairing_items(app, menu, st)?;
         }
+        pairing_items(app, menu, st)?;
         if !st.host.controllers.is_empty() {
             menu.append(&PredefinedMenuItem::separator(app)?)?;
             menu.append(&label(
@@ -626,7 +643,8 @@ pub fn refresh(app: &AppHandle, st: &AppStatus) {
     // Windows 安装版：没连上服务里的被控端时，被控端的状态没有意义
     let host_known = st.service.is_none_or(|s| s.connected);
     let online = if st.shows_host() {
-        host_known && st.host.server == ServerState::Connected
+        host_known
+            && (st.host.server == ServerState::Connected || !st.host.lan_addresses.is_empty())
     } else {
         st.controller == ServerState::Connected
     };
@@ -653,6 +671,17 @@ pub fn refresh(app: &AppHandle, st: &AppStatus) {
                 "Airhand · Host service not running"
             ),
         },
+        (Mode::Host, _, _)
+            if !st.host.lan_addresses.is_empty() && *server != ServerState::Connected =>
+        {
+            let address = &st.host.lan_addresses[0];
+            let state = if controllers > 0 {
+                controlled_by(controllers)
+            } else {
+                tr!("局域网可连接", "Available on LAN")
+            };
+            format!("Airhand · {state}\n{address}")
+        }
         (Mode::Host, ServerState::Connected, Some(code)) if controllers > 0 => {
             format!(
                 "Airhand · {}\n{}",

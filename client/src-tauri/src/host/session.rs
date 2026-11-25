@@ -155,6 +155,7 @@ async fn wait_for_displays(wait: Duration) -> Vec<DisplayInfo> {
 pub async fn run(inc: Incoming, gate: Arc<DesktopGate>) -> Result<()> {
     let session_id = inc.session_id;
     let ip = inc.peer.ip;
+    let lan = inc.lan;
     let presence = ending::Slot::default();
     let slot = presence.clone();
     // 端到端握手：没配对过、又没有配对码的控制端，在这里就被拒绝了（见 gate）。
@@ -166,7 +167,7 @@ pub async fn run(inc: Incoming, gate: Arc<DesktopGate>) -> Result<()> {
         audio::QUEUE,
         |admitted, senders| {
             let mut desktop = Desktop::new(session_id, senders, slot);
-            desktop.identity = Some((gate.clone(), ip, admitted.clone()));
+            desktop.identity = Some((gate.clone(), ip, admitted.clone(), lan));
             desktop
         },
     )
@@ -185,6 +186,7 @@ struct Desktop {
         Arc<DesktopGate>,
         std::net::IpAddr,
         airhand_link::host::Admitted,
+        bool,
     )>,
     out: Outbox,
     /// 每一路画面的发送队列（第 `i` 项是第 `i` 路）
@@ -575,8 +577,8 @@ impl Platform for Desktop {
     /// 控制端确认了握手：是真的在连（重放的握手消息走不到这里），这时才在托盘里显示它、
     /// 打开它在握手里要的防窥模式（断线重连时接着开着，见 [`virtual_display`]）
     fn confirmed(&mut self) {
-        if let Some((gate, ip, admitted)) = self.identity.take() {
-            gate.admitted(self.session_id, ip, &admitted);
+        if let Some((gate, ip, admitted, lan)) = self.identity.take() {
+            gate.admitted(self.session_id, ip, &admitted, lan);
         }
         self.presence.confirmed(self.session_id);
         #[cfg(windows)]

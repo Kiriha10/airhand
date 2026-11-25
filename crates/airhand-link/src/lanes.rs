@@ -195,6 +195,7 @@ async fn header(mut recv: RecvStream) -> Option<(SessionHeader, RecvStream)> {
 
 /// 一条中转连接上的会话：按会话 ID 把对方的流、数据报交给会话（见模块说明）
 pub struct Router {
+    via: Via,
     state: Mutex<RouterState>,
 }
 
@@ -224,7 +225,16 @@ impl Drop for Registration {
 impl Router {
     /// 开始分发 `conn` 上对方的流和数据报。返回的任务丢掉时停止
     pub fn start(conn: &Connection) -> (Arc<Self>, OwnedTask<()>) {
+        Self::start_via(conn, Via::Relay)
+    }
+
+    pub(crate) fn start_lan(conn: &Connection) -> (Arc<Self>, OwnedTask<()>) {
+        Self::start_via(conn, Via::Direct)
+    }
+
+    fn start_via(conn: &Connection, via: Via) -> (Arc<Self>, OwnedTask<()>) {
         let router = Arc::new(Self {
+            via,
             state: Mutex::default(),
         });
         let task = OwnedTask(tokio::spawn(router.clone().run(conn.clone())));
@@ -239,7 +249,7 @@ impl Router {
         let early = std::mem::take(&mut st.early);
         for (at, h, recv) in early {
             if h.session_id == session_id {
-                inbox.feed.stream(h.lane, recv, Via::Relay);
+                inbox.feed.stream(h.lane, recv, self.via);
             } else {
                 st.early.push_back((at, h, recv));
             }
@@ -255,7 +265,7 @@ impl Router {
     fn stream(&self, h: SessionHeader, recv: RecvStream) {
         let mut st = self.state.lock().unwrap();
         if let Some(feed) = st.sessions.get(&h.session_id) {
-            return feed.stream(h.lane, recv, Via::Relay);
+            return feed.stream(h.lane, recv, self.via);
         }
         let now = Instant::now();
         while st
@@ -277,7 +287,7 @@ impl Router {
         };
         // try_send 不等待；在同一把锁内分发，无需逐包克隆整个 Feed。
         if let Some(feed) = self.state.lock().unwrap().sessions.get(&session_id) {
-            feed.datagram(d, Via::Relay);
+            feed.datagram(d, self.via);
         }
     }
 

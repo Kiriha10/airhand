@@ -48,16 +48,39 @@ pub async fn establish(
     session_id: u64,
     initiator: Initiator,
 ) -> Result<Established> {
+    establish_inner(router, conn, session_id, initiator, false).await
+}
+
+pub(crate) async fn establish_lan(
+    router: &Arc<Router>,
+    conn: &Connection,
+    session_id: u64,
+    initiator: Initiator,
+) -> Result<Established> {
+    establish_inner(router, conn, session_id, initiator, true).await
+}
+
+async fn establish_inner(
+    router: &Arc<Router>,
+    conn: &Connection,
+    session_id: u64,
+    initiator: Initiator,
+    lan: bool,
+) -> Result<Established> {
     let (mut inbox, registration) = router.register(session_id);
     let mut control_in = first_stream(&mut inbox.control, STEP_TIMEOUT).await?;
     let mut control = open_lane(conn, session_id, SessionLane::Control).await?;
     let done = initiator.finish(&mut control_in, &mut control).await?;
     let bulk = open_lane(conn, session_id, SessionLane::Bulk).await?;
     let mut secured = done.secured;
-    let paths = Paths::new(conn.clone());
+    let paths = if lan {
+        Paths::lan(conn.clone())
+    } else {
+        Paths::new(conn.clone())
+    };
     let datagrams = DatagramSender::new(session_id, paths.clone(), secured.datagrams.sealer);
     let mut control_merge = Merge::new(SessionLane::Control, done.opener, inbox.control);
-    control_merge.add(control_in, Via::Relay)?;
+    control_merge.add(control_in, if lan { Via::Direct } else { Via::Relay })?;
     // 画面的每一路（见 airhand_proto::session 的"多屏"）：各自的帧流和密钥
     let video = std::mem::take(&mut secured.video)
         .into_iter()

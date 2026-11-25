@@ -9,6 +9,7 @@ struct ConnectView: View {
     @State private var renaming: SavedDevice?
     @State private var newName = ""
     @State private var deleting: SavedDevice?
+    @State private var lanAddress = ""
 
     var body: some View {
         NavigationStack {
@@ -22,6 +23,7 @@ struct ConnectView: View {
                         liveCard(s)
                     }
                     codeCard
+                    lanCard
                     devices
                 }
                 .padding(.horizontal, 20)
@@ -170,6 +172,39 @@ struct ConnectView: View {
         app.connect(code: code)
     }
 
+    private var lanCard: some View {
+        Card {
+            VStack(alignment: .leading, spacing: 12) {
+                Label(L.t("lan_connect_title"), systemImage: "network")
+                    .font(.title3.weight(.bold)).foregroundStyle(Theme.text)
+                Text(L.t("lan_connect_hint")).font(.subheadline).foregroundStyle(Theme.sub)
+                TextField("192.168.1.10:4434", text: $lanAddress)
+                    .keyboardType(.asciiCapable).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder).accessibilityLabel(L.t("lan_address_label"))
+                    .onSubmit { submitLan() }
+                Button { submitLan() } label: {
+                    HStack(spacing: 8) {
+                        if lanConnecting { ProgressView().tint(.white) }
+                        Text(lanConnecting ? L.t("connecting") : L.t("connect"))
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(lanAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || lanConnecting)
+            }
+        }
+    }
+
+    private var lanConnecting: Bool {
+        app.session?.lanAddr != nil && app.session?.phase == .connecting
+    }
+
+    private func submitLan() {
+        let address = lanAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty, !lanConnecting else { return }
+        focused = false
+        app.connect(code: "000000", lanAddr: address)
+    }
+
     // ── 我的设备 ──
 
     private var devices: some View {
@@ -188,9 +223,9 @@ struct ConnectView: View {
                         .contextMenu {
                             Button { newName = d.title; renaming = d } label: { Label(L.t("rename"), systemImage: "pencil") }
                             Button {
-                                UIPasteboard.general.string = Code.format(d.code)
+                                UIPasteboard.general.string = d.lanAddr ?? Code.format(d.code)
                                 app.show(L.t("copied"))
-                            } label: { Label(L.t("copy_code"), systemImage: "doc.on.doc") }
+                            } label: { Label(L.t(d.lanAddr == nil ? "copy_code" : "lan_copy_address"), systemImage: "doc.on.doc") }
                             Button(role: .destructive) { deleting = d } label: { Label(L.t("delete"), systemImage: "trash") }
                         }
                 }
@@ -273,7 +308,7 @@ struct DeviceRow: View {
     var body: some View {
         Button {
             if waiting { return }
-            app.connect(code: device.code)
+            app.connect(code: device.code, lanAddr: device.lanAddr)
         } label: {
             HStack(spacing: 14) {
                 DeviceIcon(os: device.os)
@@ -282,7 +317,7 @@ struct DeviceRow: View {
                     if waiting {
                         Text(L.t("device_waiting")).font(.caption).foregroundStyle(Theme.warn)
                     } else {
-                        Text([Code.format(device.code), device.hostOs, relativeTime(device.lastConnected)]
+                        Text([device.lanAddr ?? Code.format(device.code), device.hostOs, relativeTime(device.lastConnected)]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.caption).foregroundStyle(Theme.sub).lineLimit(1)
                     }
@@ -347,6 +382,6 @@ struct PairingSheet: View {
     private func submit() {
         guard code.count == 6 else { return }
         dismiss()
-        app.connect(code: request.code, pairing: code)
+        app.connect(code: request.code, pairing: code, lanAddr: request.lanAddr)
     }
 }

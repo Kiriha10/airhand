@@ -476,4 +476,10 @@
     <string name="tv_scale_fit">Fit</string>
     <string name="tv_scale_fill">Fill (crop edges)</string>
     <string name="tv_scale_stretch">Stretch</string>
+    <string name="lan_connect_title">LAN connection</string>
+    <string name="lan_connect_hint">Control directly on the same local network, without a relay. Copy the address from the Windows tray\'s LAN connection menu. The first connection needs the pairing code.</string>
+    <string name="lan_address_label">Windows LAN address</string>
+    <string name="lan_copy_address">Copy LAN address</string>
+    <string name="problem_invalid_lan_address">Enter a local IP address, optionally with a port, such as 192.168.1.10:4434</string>
+    <string name="problem_lan_unreachable">Cannot reach the LAN device. Check the address, local network, and whether the host is running. %1$s</string>
 </resources>

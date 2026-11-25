@@ -76,9 +76,11 @@ enum Commands {
 
     /// `privacy`：要不要防窥模式（重连时带上现在的开关，对方一开始就保持着，它的屏幕不会在重连的间隙露出来）
     static func connect(code: String, resume: String?, settings: Quality, hostKey: String?, pairing: String?, audio: Bool,
-                        privacy: Bool = false) -> JSON {
-        ["cmd": "connect", "code": code, "resume": Resume.toJson(resume), "hostKey": hostKey ?? NSNull(),
+                        privacy: Bool = false, lanAddr: String? = nil) -> JSON {
+        var command: JSON = ["cmd": "connect", "code": code, "resume": Resume.toJson(resume), "hostKey": hostKey ?? NSNull(),
          "pairing": pairing ?? NSNull(), "settings": settings.json, "audio": audio, "privacy": privacy]
+        if let lanAddr { command["lanAddr"] = lanAddr }
+        return command
     }
 
     static func input(_ sid: UInt32, _ events: [JSON]) -> JSON { var c = cmd("input", sid); c["events"] = events; return c }

@@ -279,6 +279,9 @@ type Pending = Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SessionGrant, Probl
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectOptions {
+    /// Connect directly to a local IP/port, independently of the relay service.
+    #[serde(default)]
+    pub lan_addr: Option<String>,
     /// 重连凭证：之前连上这个控制码时得到的（[`SessionInfo::resume`]），第一次连接时为 `None`
     #[serde(default)]
     pub resume: Option<ResumeToken>,
@@ -371,6 +374,8 @@ pub struct SessionInfo {
     pub host_key: String,
     /// 安全码（见模块说明的"端到端加密"）
     pub safety: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lan_addr: Option<String>,
 }
 
 impl ControllerService {
@@ -407,7 +412,6 @@ impl ControllerService {
         ui: Arc<dyn SessionUi>,
         frontend: Frontend,
     ) -> Result<SessionInfo, Problem> {
-        let code = airhand_proto::parse_code(code).ok_or(Problem::InvalidCode)?;
         let pairing = match opts.pairing.as_deref().map(str::trim) {
             None | Some("") => None,
             Some(p) => Some(airhand_proto::parse_pairing(p).ok_or(Problem::PairingFailed)?),
@@ -417,6 +421,14 @@ impl ControllerService {
             Some(k) => {
                 Some(secure::unhex32(k).ok_or_else(|| Problem::failed("invalid saved host key"))?)
             }
+        };
+        let mut lan = match opts.lan_addr.as_deref() {
+            Some(address) => Some(crate::lan::connect(&self.inner.cfg, address).await?),
+            None => None,
+        };
+        let code = match &lan {
+            Some(local) => local.code,
+            None => airhand_proto::parse_code(code).ok_or(Problem::InvalidCode)?,
         };
         // 端到端握手的第一条消息随请求一起发给服务器，它转给被控端（见模块说明的"端到端加密"）。
         // 开始时的画质和声音在介绍里：被控端一开始就按它建编码器，不用先按默认设置建一个再重建
@@ -437,52 +449,73 @@ impl ControllerService {
         })
         .map_err(Problem::failed)?;
         let resume = opts.resume;
-        let live = self
-            .inner
-            .live
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or(Problem::NotConnected)?;
-        let req_id = self.inner.next_req.fetch_add(1, Ordering::Relaxed);
-        let (otx, orx) = oneshot::channel();
-        {
-            let mut pending = live.pending.lock().unwrap();
-            if pending.len() >= 64 {
-                return Err(Problem::failed("too many pending connections"));
+        let (conn, endpoint, router, file_limit, grant) = if let Some(local) = &mut lan {
+            let grant = local.request(resume, init).await?;
+            (
+                local.signal.conn.clone(),
+                local.signal.endpoint.clone(),
+                local.router.clone(),
+                None,
+                grant,
+            )
+        } else {
+            let live = self
+                .inner
+                .live
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or(Problem::NotConnected)?;
+            let req_id = self.inner.next_req.fetch_add(1, Ordering::Relaxed);
+            let (otx, orx) = oneshot::channel();
+            {
+                let mut pending = live.pending.lock().unwrap();
+                if pending.len() >= 64 {
+                    return Err(Problem::failed("too many pending connections"));
+                }
+                pending.insert(req_id, otx);
             }
-            pending.insert(req_id, otx);
-        }
-        // Also remove cancelled requests, not just requests that time out.
-        struct RequestGuard(Pending, u32);
-        impl Drop for RequestGuard {
-            fn drop(&mut self) {
-                self.0.lock().unwrap().remove(&self.1);
+            // Also remove cancelled requests, not just requests that time out.
+            struct RequestGuard(Pending, u32);
+            impl Drop for RequestGuard {
+                fn drop(&mut self) {
+                    self.0.lock().unwrap().remove(&self.1);
+                }
             }
-        }
-        let _request = RequestGuard(live.pending.clone(), req_id);
-        live.tx
-            .try_send(ClientMsg::Connect {
-                req_id,
-                code,
-                resume,
-                init,
-            })
-            .map_err(|_| server_gone())?;
-        let grant = match tokio::time::timeout(Duration::from_secs(10), orx).await {
-            Ok(Ok(Ok(g))) => g,
-            Ok(Ok(Err(e))) => return Err(e),
-            Ok(Err(_)) => return Err(server_gone()),
-            Err(_) => {
-                live.pending.lock().unwrap().remove(&req_id);
-                return Err(Problem::ServerTimeout);
-            }
+            let _request = RequestGuard(live.pending.clone(), req_id);
+            live.tx
+                .try_send(ClientMsg::Connect {
+                    req_id,
+                    code,
+                    resume,
+                    init,
+                })
+                .map_err(|_| server_gone())?;
+            let grant = match tokio::time::timeout(Duration::from_secs(10), orx).await {
+                Ok(Ok(Ok(g))) => g,
+                Ok(Ok(Err(e))) => return Err(e),
+                Ok(Err(_)) => return Err(server_gone()),
+                Err(_) => {
+                    live.pending.lock().unwrap().remove(&req_id);
+                    return Err(Problem::ServerTimeout);
+                }
+            };
+            (
+                live.conn,
+                live.endpoint,
+                live.router,
+                live.file_limit,
+                grant,
+            )
         };
 
         // 在控制通道上做完握手：确认对方的身份、让对方确认本机
-        let link = establish(&live.router, &live.conn, grant.session_id, initiator)
-            .await
-            .map_err(|e| Problem::from_error(e, Problem::failed))?;
+        let link = if lan.is_some() {
+            link::establish_lan(&router, &conn, grant.session_id, initiator).await
+        } else {
+            establish(&router, &conn, grant.session_id, initiator).await
+        }
+        .map_err(|e| Problem::from_error(e, Problem::failed))?;
         let (peer, safety) = (link.peer, link.safety.clone());
         let arrivals = Arc::new(Mutex::new(session::arrivals()));
 
@@ -499,7 +532,7 @@ impl ControllerService {
             grant.session_id,
             link.paths.clone(),
             file_keys,
-            live.file_limit,
+            file_limit,
             ControllerPeer(Mutex::new(Some((tx.clone(), bulk_tx.clone())))),
             file_streams,
         );
@@ -509,17 +542,22 @@ impl ControllerService {
         // 直连：等被控端发来候选地址
         let (offers_tx, offers) = mpsc::channel(4);
         let answer = tx.clone();
-        let direct = direct::controller::run(direct::controller::Session {
-            endpoint: live.endpoint.clone(),
-            session_id: grant.session_id,
-            observed: grant.observed,
-            paths: link.paths.clone(),
-            feed: link.feed,
-            offers,
-            answer: Box::new(move |offer| {
-                let _ = answer.send(ControllerMsg::Direct(offer));
-            }),
-        });
+        let direct: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            if lan.is_some() {
+                Box::pin(std::future::pending())
+            } else {
+                Box::pin(direct::controller::run(direct::controller::Session {
+                    endpoint,
+                    session_id: grant.session_id,
+                    observed: grant.observed,
+                    paths: link.paths.clone(),
+                    feed: link.feed,
+                    offers,
+                    answer: Box::new(move |offer| {
+                        let _ = answer.send(ControllerMsg::Direct(offer));
+                    }),
+                }))
+            };
         let (mode, clipboard) = match frontend {
             Frontend::Desktop { clipboard, sync } => {
                 let enabled = Arc::new(AtomicBool::new(sync));
@@ -543,13 +581,14 @@ impl ControllerService {
             paths: link.paths,
             direct: session::Direct {
                 offers: offers_tx,
-                task: Box::pin(direct),
+                task: direct,
             },
             mic: (grant.session_id, mic_rx, link.mic),
             files: (files.clone(), files_task),
             remote: remote.clone(),
         };
         let registration = link.registration;
+        let lan_addr = lan.as_ref().map(|local| local.address.clone());
         let inner = self.inner.clone();
         let tx2 = tx.clone();
         // Hold the registry lock until insertion; a fast EOF must not remove a
@@ -558,6 +597,7 @@ impl ControllerService {
         let handle = self.inner.rt.spawn(async move {
             // 会话结束或者被中止时随之注销
             let _registration = registration;
+            let _lan_connection = lan;
             session::run(sid, io, tx2, rx).await;
             inner.sessions.lock().unwrap().remove(&sid);
         });
@@ -585,6 +625,7 @@ impl ControllerService {
             resume: grant.resume,
             host_key: secure::hex(&peer),
             safety,
+            lan_addr,
         })
     }
 
@@ -811,6 +852,13 @@ impl Drop for ControllerService {
 }
 
 async fn run(inner: Arc<Inner>, report: Report) {
+    if inner.cfg.server.trim().is_empty() {
+        report(ServerState::Disconnected {
+            reason: Problem::NotConnected,
+        });
+        std::future::pending::<()>().await;
+        return;
+    }
     let mut reconnect = Reconnect::new(report.clone());
     loop {
         reconnect.begin();

@@ -58,6 +58,7 @@ fn incoming(
     };
     let (kick_tx, kick) = watch::channel(ByeReason::Kicked);
     let inc = Incoming {
+        lan: false,
         conn: host.conn.clone(),
         router: router.clone(),
         session_id,

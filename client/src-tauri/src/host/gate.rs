@@ -90,10 +90,11 @@ impl DesktopGate {
     }
 
     /// 会话已经通过认证并开始：只显示加密握手中确认过的名称。服务器的 Incoming 不发布到列表。
-    pub fn admitted(&self, session_id: u64, ip: std::net::IpAddr, a: &Admitted) {
+    pub fn admitted(&self, session_id: u64, ip: std::net::IpAddr, a: &Admitted, lan: bool) {
         self.hub.send_modify(|s| {
             s.host.controllers.push(crate::status::Controller {
                 session_id,
+                lan,
                 peer: airhand_proto::signal::Peer {
                     name: a.name.clone(),
                     ip,
@@ -101,6 +102,11 @@ impl DesktopGate {
                 safety: Some(a.safety.clone()),
             });
         });
+    }
+
+    pub fn lan_code(&self) -> u32 {
+        let key = self.identity.public();
+        100_000 + u32::from_le_bytes(key[..4].try_into().unwrap()) % 900_000
     }
 }
 

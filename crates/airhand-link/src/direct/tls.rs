@@ -67,6 +67,22 @@ impl Cert {
             key: PrivatePkcs8KeyDer::from(ck.signing_key.serialize_der()),
         })
     }
+
+    /// LAN connections authenticate the device with the existing Noise/SPAKE2 handshake.
+    /// This listener has its own ALPN and never shares the relay trust store.
+    pub(crate) fn lan_listener(&self, alpn: &[u8]) -> Result<ServerConfig> {
+        let mut tls = rustls::ServerConfig::builder_with_provider(provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])?
+            .with_no_client_auth()
+            .with_single_cert(vec![self.der.clone()], self.key.clone_key().into())?;
+        tls.alpn_protocols = vec![alpn.to_vec()];
+        tls.max_early_data_size = 0;
+        let mut cfg = ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
+        let mut transport = crate::net::transport_config();
+        transport.max_concurrent_bidi_streams(VarInt::from_u32(1));
+        cfg.transport_config(Arc::new(transport));
+        Ok(cfg)
+    }
 }
 
 /// 被控端：接受控制端连过来的直连（放在连中转的那个 endpoint 上）。控制端必须出示证书，是谁握手之后按指纹认

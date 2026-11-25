@@ -562,6 +562,23 @@ pub(crate) fn on_menu(app: &AppHandle, id: &str) {
                 }
             }
         }
+        local if local.starts_with("copy_lan_") => {
+            let index = local.trim_start_matches("copy_lan_").parse::<usize>().ok();
+            let address = index.and_then(|i| {
+                app.state::<AppState>()
+                    .hub
+                    .borrow()
+                    .host
+                    .lan_addresses
+                    .get(i)
+                    .cloned()
+            });
+            if let Some(address) = address {
+                if let Err(e) = clipboard::set_text(&address) {
+                    warn!("copying LAN address failed: {e}");
+                }
+            }
+        }
         "quit" => {
             let state = app.state::<AppState>();
             // Windows 安装版：退出 = 被控端也停止（和直接运行时一样，退出后本机不能再被控制）

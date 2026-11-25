@@ -42,7 +42,8 @@ final class AppModel {
     struct PairingRequest: Identifiable {
         var code: String
         var problem: Problem
-        var id: String { code + problem.kind }
+        var lanAddr: String? = nil
+        var id: String { (lanAddr ?? code) + problem.kind }
     }
 
     struct Toast: Equatable, Identifiable {
@@ -92,20 +93,22 @@ final class AppModel {
     // ───────────────────────────── 远程会话 ─────────────────────────────
 
     /// 连接一台设备（首页输入的控制码、我的设备、配对码对话框）。连接过程留在首页，连上了才进入远程画面
-    func connect(code: String, pairing: String? = nil, forgetKey: Bool = false) {
+    func connect(code: String, pairing: String? = nil, forgetKey: Bool = false, lanAddr: String? = nil) {
+        let saved = lanAddr.flatMap { devices.getLan($0) } ?? devices.get(code)
+        let targetCode = saved?.code ?? code
         if let s = session {
-            if s.code == code, pairing == nil, s.phase.isActive {
+            if s.code == targetCode, s.lanAddr == lanAddr, pairing == nil, s.phase.isActive {
                 if s.phase == .live { showingSession = true }
                 return
             }
             s.close()
             session = nil
         }
-        let saved = devices.get(code)
-        let s = RemoteSession(app: self, code: code, resume: saved?.resume.isEmpty == false ? saved?.resume : nil,
-                              hostKey: forgetKey ? nil : saved?.hostKey, pairing: pairing)
+        let resume = (lanAddr == nil ? saved?.resume : saved?.lanResume).flatMap { $0.isEmpty ? nil : $0 }
+        let s = RemoteSession(app: self, code: targetCode, resume: resume,
+                              hostKey: forgetKey ? nil : saved?.hostKey, pairing: pairing, lanAddr: lanAddr)
         session = s
-        connectingCode = code
+        connectingCode = targetCode
         connectError = nil
         s.onPhase = { [weak self, weak s] phase in
             guard let self, let s, self.session === s else { return }
@@ -127,7 +130,7 @@ final class AppModel {
             session = nil
             showingSession = false
             if p.needsPairing {
-                pairingFor = PairingRequest(code: s.code, problem: p)
+                pairingFor = PairingRequest(code: s.code, problem: p, lanAddr: s.lanAddr)
             } else {
                 connectError = Messages.problem(p)
             }

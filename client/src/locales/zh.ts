@@ -349,6 +349,8 @@ export default {
   // 连接被控端
   "problem.notConnected": "尚未连接到服务器，请稍候重试",
   "problem.invalidCode": "控制码应为 6 位数字",
+  "problem.invalidLanAddress": "请输入局域网 IP 地址，可附带端口，如 192.168.1.10:4434",
+  "problem.lanUnreachable": "无法连接局域网设备，请检查地址、局域网和被控端状态：{detail}",
   "problem.codeNotFound": "控制码不存在或对方不在线",
   "problem.rateLimited": "尝试过于频繁，请稍后再试",
   "problem.hostBusy": "对方当前会话数已满",

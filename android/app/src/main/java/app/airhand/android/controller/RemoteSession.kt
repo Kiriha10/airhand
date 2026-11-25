@@ -8,6 +8,7 @@ import android.view.Surface
 import app.airhand.android.AirhandApp
 import app.airhand.android.core.ClipFiles
 import app.airhand.android.core.Codec
+import app.airhand.android.core.Code
 import app.airhand.android.core.DisplayInfo
 import app.airhand.android.core.EncoderInfo
 import app.airhand.android.core.HostHello
@@ -63,7 +64,7 @@ data class CursorState(
  */
 class RemoteSession(
     private val app: AirhandApp,
-    val code: String,
+    code: String,
     resume: String?,
     /** 只看画面（电视）：不发送任何输入 */
     val viewOnly: Boolean,
@@ -71,7 +72,12 @@ class RemoteSession(
     hostKey: String? = null,
     /** 配对码（对方要求配对、或者对方的身份变了要重新配对时用户输入的），只用于这一次连接 */
     pairing: String? = null,
+    /** Standalone local connection; server availability is not required. */
+    val lanAddr: String? = null,
 ) {
+    @Volatile
+    var code: String = code
+        private set
     sealed interface Phase {
         data object Connecting : Phase
         data object Live : Phase
@@ -89,7 +95,7 @@ class RemoteSession(
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
     private val saved = app.devices.get(code)
-    val hostName = MutableStateFlow(saved?.title() ?: "")
+    val hostName = MutableStateFlow(saved?.title()?.takeIf { it.isNotBlank() } ?: lanAddr ?: "")
     val hostOs = MutableStateFlow(saved?.hostOs ?: "")
     val hello = MutableStateFlow<HostHello?>(null)
     val displays = MutableStateFlow<List<DisplayInfo>>(emptyList())
@@ -254,7 +260,7 @@ class RemoteSession(
                 val withAudio = audioOn.value && !background
                 sentAudio = withAudio
                 // 防窥模式也在握手里就说：断线重连时对方一直保持着，它的屏幕不会在重连的间隙露出来
-                val cmd = Commands.connect(code, resume, settings, hostKey, pairing, withAudio, privacyWanted)
+                val cmd = Commands.connect(code, resume, settings, hostKey, pairing, withAudio, privacyWanted, lanAddr)
                 val r = runCatching { JSONObject(Native.ctlCall(h, cmd.toString())) }
                     .getOrElse { JSONObject().put("err", JSONObject().put("kind", "failed").put("detail", it.toString())) }
                 if (closed) {
@@ -283,6 +289,11 @@ class RemoteSession(
                 val p = Problem.parse(r.optJSONObject("err"))
                 attempts++
                 when (p.kind) {
+                    "lanUnreachable" -> {
+                        if (!connectedOnce) { _phase.value = Phase.Failed(p); break }
+                        _phase.value = Phase.Reconnecting(p)
+                        sleep(RETRY_MS * 2)
+                    }
                     // 带着凭证（我的设备里保存的、或者断线重连）而对方不在线：等它。凭证作废了的话服务器回答的是
                     // kicked（见下面），所以不用再拿控制码试一次——那样会算一次猜错，占掉这个 IP 的额度
                     "hostOffline" -> {
@@ -327,6 +338,12 @@ class RemoteSession(
     private fun waitServer(limitMs: Long): Problem? {
         val start = SystemClock.elapsedRealtime()
         while (!closed) {
+            if (lanAddr != null) {
+                if (client.handle() != 0L) return null
+                if (SystemClock.elapsedRealtime() - start > limitMs) return Problem("lanUnreachable")
+                Thread.sleep(100)
+                continue
+            }
             when (val s = client.server.value) {
                 is ServerState.Connected -> if (client.handle() != 0L) return null
                 is ServerState.Disconnected -> {
@@ -347,6 +364,7 @@ class RemoteSession(
 
     /** 连上了被控端（还没开始：对方可能要先问它的用户，见 [onHello]） */
     private fun onConnected(h: Long, ok: JSONObject) {
+        Code.parse(ok.optString("code"))?.let { code = it }
         handle = h
         sid = ok.getInt("sid")
         // 光标的槽位是被控端为一个会话分配的：新的会话从头开始
@@ -370,7 +388,7 @@ class RemoteSession(
 
     /** 会话开始（对方同意了，或者不需要同意） */
     private fun onHello() {
-        app.devices.connected(code, grantName, grantOs, resume ?: "", hostKey)
+        app.devices.connected(code, grantName, grantOs, resume ?: "", hostKey, lanAddr)
         connectedOnce = true
         _phase.value = Phase.Live
     }

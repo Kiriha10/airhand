@@ -67,6 +67,9 @@ impl AppStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostStatus {
     pub server: ServerState,
+    /// Standalone local listener addresses, available even when the relay is offline.
+    #[serde(default)]
+    pub lan_addresses: Vec<String>,
     /// 控制码（已连接时有效）
     pub code: Option<u32>,
     /// 正在控制本机的控制端
@@ -98,6 +101,7 @@ impl Default for HostStatus {
     fn default() -> Self {
         Self {
             server: ServerState::Connecting,
+            lan_addresses: Vec::new(),
             code: None,
             controllers: Vec::new(),
             pairing: None,
@@ -127,6 +131,8 @@ pub struct ServiceStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Controller {
     pub session_id: u64,
+    #[serde(default)]
+    pub lan: bool,
     pub peer: Peer,
     /// 端到端握手之后才有：安全码（控制端显示的是同一个，见 `airhand_proto::handshake`）
     #[serde(default)]

@@ -130,6 +130,7 @@ dependencies = [
  "snow",
  "socket2",
  "spake2",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tracing",

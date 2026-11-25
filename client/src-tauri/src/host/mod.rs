@@ -225,37 +225,108 @@ async fn run(
     hub: StatusHub,
     gate: Arc<DesktopGate>,
     code: HostCode,
-    cmds: mpsc::UnboundedReceiver<HostCmd>,
+    mut cmds: mpsc::UnboundedReceiver<HostCmd>,
 ) {
     // 上次意外退出时虚拟显示器还启用着、防窥撤下的本机显示器还没放回来：先恢复，再接会话
     let _ = tokio::task::spawn_blocking(virtual_display::recover).await;
     // 现在的控制码（第一次启动时是 config.toml 里保存的）：第一次连接就取回它
     let reclaim = code.current();
+    let link = config::link();
+    let local_code = {
+        let code = code.clone();
+        let fallback = gate.lan_code();
+        Arc::new(move || code.current().map_or(fallback, |c| c.code))
+    };
+    let local_host =
+        airhand_link::lan::Host::bind_default(link.name.clone(), link.os.clone(), local_code);
+    let (relay_tx, relay_rx) = mpsc::unbounded_channel();
+    let (lan_tx, lan_rx) = mpsc::unbounded_channel();
     let events = Arc::new(TrayStatus {
-        hub,
-        gate: gate.clone(),
+        hub: hub.clone(),
         code,
     });
-    airhand_link::host::run(
-        config::link(),
+    let relay_gate = gate.clone();
+    let relay = airhand_link::host::run(
+        link,
         config::persistent(),
         reclaim,
         events,
         move |inc| {
-            let gate = gate.clone();
+            let gate = relay_gate.clone();
             async move {
                 let _ = session::run(inc, gate).await;
             }
         },
-        cmds,
-    )
-    .await;
+        relay_rx,
+    );
+    let lan_gate = gate.clone();
+    let local = async move {
+        let local_host = match local_host {
+            Ok(host) => host,
+            Err(e) => {
+                warn!("can't start the standalone LAN listener: {e:#}");
+                drop(lan_rx);
+                std::future::pending::<()>().await;
+                return;
+            }
+        };
+        let refresh_hub = hub.clone();
+        let _refresh = airhand_link::tasks::OwnedTask(tokio::spawn(async move {
+            let mut timer = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                timer.tick().await;
+                let addresses = tokio::task::spawn_blocking(|| {
+                    airhand_link::lan::addresses(airhand_link::lan::PORT)
+                })
+                .await
+                .unwrap_or_default();
+                refresh_hub.send_if_modified(|s| {
+                    if s.host.lan_addresses == addresses {
+                        return false;
+                    }
+                    s.host.lan_addresses = addresses;
+                    true
+                });
+            }
+        }));
+        local_host
+            .run(
+                move |inc| {
+                    let gate = lan_gate.clone();
+                    let hub = hub.clone();
+                    async move {
+                        struct Presence(StatusHub, u64);
+                        impl Drop for Presence {
+                            fn drop(&mut self) {
+                                self.0.send_modify(|s| {
+                                    s.host.controllers.retain(|c| c.session_id != self.1)
+                                });
+                            }
+                        }
+                        let _presence = Presence(hub, inc.session_id);
+                        let _ = session::run(inc, gate).await;
+                    }
+                },
+                lan_rx,
+            )
+            .await;
+    };
+    let commands = async move {
+        while let Some(cmd) = cmds.recv().await {
+            // Apply this locally even while the relay is unreachable.
+            if cmd == HostCmd::NewCode {
+                gate.reset();
+            }
+            let _ = lan_tx.send(cmd);
+            let _ = relay_tx.send(cmd);
+        }
+    };
+    tokio::select! { _ = relay => {}, _ = local => {}, _ = commands => {} }
 }
 
 /// 被控端的状态写进托盘的 [`StatusHub`]，控制码记在 [`HostCode`] 里，并保存在 config.toml 里
 struct TrayStatus {
     hub: StatusHub,
-    gate: Arc<DesktopGate>,
     code: HostCode,
 }
 
@@ -298,21 +369,46 @@ impl HostEvents for TrayStatus {
     fn offline(&self) {
         self.hub.send_modify(|s| {
             s.host.code = None;
-            s.host.controllers.clear();
+            s.host.controllers.retain(|c| c.lan);
         });
-    }
-
-    fn kicked(&self, cmd: HostCmd) {
-        // 更换控制码：配对码也换一个，配对过的控制端全部忘掉（被断开的人不能拿着旧的配对连回来）
-        if cmd == HostCmd::NewCode {
-            self.gate.reset();
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn relay_offline_keeps_lan_controllers_and_pairing_available() {
+        let hub = crate::status::new_hub();
+        hub.send_modify(|s| {
+            s.host.code = Some(123456);
+            s.host.pairing = Some("624913".into());
+            s.host.lan_addresses = vec!["192.168.1.20:4434".into()];
+            for (id, lan) in [(1, false), (2, true)] {
+                s.host.controllers.push(crate::status::Controller {
+                    session_id: id,
+                    lan,
+                    peer: airhand_proto::signal::Peer {
+                        name: "test".into(),
+                        ip: "192.168.1.21".parse().unwrap(),
+                    },
+                    safety: None,
+                });
+            }
+        });
+        let events = TrayStatus {
+            hub: hub.clone(),
+            code: HostCode::default(),
+        };
+        events.offline();
+        let status = hub.borrow();
+        assert_eq!(status.host.code, None);
+        assert_eq!(status.host.controllers.len(), 1);
+        assert_eq!(status.host.controllers[0].session_id, 2);
+        assert_eq!(status.host.pairing.as_deref(), Some("624913"));
+        assert_eq!(status.host.lan_addresses, ["192.168.1.20:4434"]);
+    }
 
     /// 服务器分配、换了密钥、放弃（更换控制码）都记进 [`HostCode`]：被控端停下再启动时取回的是现在的控制码，
     /// 不是进程启动时配置文件里的（测试里没有配置文件：一开始没有控制码）
@@ -323,7 +419,6 @@ mod tests {
         let hub = crate::status::new_hub();
         let events = TrayStatus {
             hub: hub.clone(),
-            gate: DesktopGate::load(hub.clone()),
             code: code.clone(),
         };
         // 托盘里只有一份，被控端每次启动拿的是它的克隆

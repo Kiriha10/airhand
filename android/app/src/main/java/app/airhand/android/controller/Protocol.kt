@@ -119,7 +119,9 @@ object Commands {
         pairing: String? = null,
         audio: Boolean = false,
         privacy: Boolean = false,
+        lanAddr: String? = null,
     ): JSONObject = options(resume, settings, hostKey, pairing, audio, privacy).put("cmd", "connect").put("code", code)
+        .apply { if (lanAddr != null) put("lanAddr", lanAddr) }
 
     /** 连接选项（`ConnectOptions`） */
     fun options(resume: String?, settings: Quality, hostKey: String?, pairing: String?, audio: Boolean, privacy: Boolean): JSONObject =

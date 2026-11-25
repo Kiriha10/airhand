@@ -69,11 +69,12 @@ class AirhandApp : Application() {
      * 连接一台设备（之前的会话会先关掉）。`pairing`：用户输入的配对码（对方要求配对，或者对方的身份变了、
      * 要重新配对：配对码认的就是对方，连上之后记下对方现在的公钥）
      */
-    fun startSession(code: String, viewOnly: Boolean, pairing: String? = null): RemoteSession {
+    fun startSession(code: String, viewOnly: Boolean, pairing: String? = null, lanAddr: String? = null): RemoteSession {
         android.util.Log.i("airhand", "connecting to $code${if (viewOnly) " (view only)" else ""}")
         _session.value?.close()
-        val saved = devices.get(code)
-        val s = RemoteSession(this, code, saved?.resume, viewOnly, saved?.hostKey, pairing)
+        val saved = lanAddr?.let(devices::getLan) ?: devices.get(code)
+        val resume = if (lanAddr == null) saved?.resume else saved?.lanResume
+        val s = RemoteSession(this, saved?.code ?: code, resume, viewOnly, saved?.hostKey, pairing, lanAddr)
         _session.value = s
         s.start()
         return s

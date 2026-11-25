@@ -83,6 +83,8 @@ export type Problem =
   // 连接被控端
   | { kind: "notConnected" }
   | { kind: "invalidCode" }
+  | { kind: "invalidLanAddress" }
+  | { kind: "lanUnreachable"; detail: string }
   | { kind: "codeNotFound" }
   | { kind: "rateLimited" }
   | { kind: "hostBusy" }
@@ -171,6 +173,7 @@ export interface SavedDevice {
 export type ResumeToken = number[];
 
 export interface SessionInfo {
+  lanAddr?: string;
   sid: number;
   code: string;
   hostName: string;
@@ -187,6 +190,7 @@ export interface SessionInfo {
  * 三种界面的 connect 都是这些字段加上控制码
  */
 export interface ConnectOptions {
+  lanAddr?: string | null;
   /** 重连凭证：之前连上时得到的，第一次连接时为 null */
   resume: ResumeToken | null;
   /** 之前记下的对方公钥：只认它（对不上是 hostKeyChanged） */

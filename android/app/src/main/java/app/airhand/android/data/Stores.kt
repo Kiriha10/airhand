@@ -226,8 +226,10 @@ data class SavedDevice(
     val hostKey: String? = null,
     /** 控制这台 Mac 时互换外接键盘的 Ctrl 和 ⌘（会话菜单的快捷键页里开关，和桌面控制台一样按设备记住） */
     val swapCtrlCommand: Boolean = false,
+    val lanAddr: String? = null,
+    val lanResume: String? = null,
 ) {
-    fun title(): String = alias?.takeIf { it.isNotBlank() } ?: hostName.takeIf { it.isNotBlank() } ?: ""
+    fun title(): String = alias?.takeIf { it.isNotBlank() } ?: hostName.takeIf { it.isNotBlank() } ?: lanAddr ?: ""
 
     fun toJson(): JSONObject = JSONObject()
         .put("code", code)
@@ -238,6 +240,8 @@ data class SavedDevice(
         .put("lastUsed", lastUsed)
         .put("hostKey", hostKey ?: JSONObject.NULL)
         .put("swapCtrlCommand", swapCtrlCommand)
+        .put("lanAddr", lanAddr ?: JSONObject.NULL)
+        .put("lanResume", lanResume ?: JSONObject.NULL)
 
     companion object {
         fun parse(o: JSONObject) = SavedDevice(
@@ -249,6 +253,8 @@ data class SavedDevice(
             lastUsed = o.optLong("lastUsed"),
             hostKey = o.optStringOrNull("hostKey"),
             swapCtrlCommand = o.optBoolean("swapCtrlCommand"),
+            lanAddr = o.optStringOrNull("lanAddr"),
+            lanResume = o.optStringOrNull("lanResume"),
         )
     }
 }
@@ -275,18 +281,28 @@ class DeviceStore(context: Context) {
 
     fun get(code: String): SavedDevice? = _flow.value.firstOrNull { it.code == code }
 
+    fun getLan(address: String): SavedDevice? {
+        val key = app.airhand.android.core.LanAddress.key(address) ?: return null
+        return _flow.value.firstOrNull { it.lanAddr?.let(app.airhand.android.core.LanAddress::key) == key }
+    }
+
     /** 连上了：记下（或者更新）这台设备。`hostKey` 是这次确认过的对方公钥（第一次连上、或者用户信任了新的身份） */
     @Synchronized
-    fun connected(code: String, hostName: String, hostOs: String, resume: String, hostKey: String?) {
-        val old = get(code)
+    fun connected(code: String, hostName: String, hostOs: String, resume: String, hostKey: String?, lanAddr: String? = null) {
+        val old = if (lanAddr != null && !hostKey.isNullOrBlank()) {
+            _flow.value.firstOrNull { it.hostKey == hostKey } ?: get(code)?.takeIf { it.hostKey == null || it.hostKey == hostKey }
+        } else get(code)
         val d = (old ?: SavedDevice(code)).copy(
+            code = code,
             hostName = hostName.ifBlank { old?.hostName ?: "" },
             hostOs = hostOs.ifBlank { old?.hostOs ?: "" },
-            resume = resume,
+            resume = if (lanAddr == null) resume else old?.resume,
+            lanAddr = lanAddr ?: old?.lanAddr,
+            lanResume = if (lanAddr != null) resume else old?.lanResume,
             lastUsed = System.currentTimeMillis(),
             hostKey = hostKey?.takeIf { it.isNotBlank() } ?: old?.hostKey,
         )
-        set(_flow.value.filter { it.code != code } + d)
+        set(_flow.value.filter { it.code != code && it.code != old?.code } + d)
     }
 
     @Synchronized

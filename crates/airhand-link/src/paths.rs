@@ -79,6 +79,21 @@ impl Paths {
         }))
     }
 
+    /// A standalone LAN session has one direct connection and no relay dependency.
+    pub(crate) fn lan(conn: Connection) -> Self {
+        Self(Arc::new(Shared {
+            relay: conn.clone(),
+            state: Mutex::new(State {
+                direct: Some(Direct {
+                    conn,
+                    control: None,
+                }),
+                media_direct: true,
+            }),
+            broken: watch::Sender::new(0),
+        }))
+    }
+
     pub fn relay(&self) -> &Connection {
         &self.0.relay
     }
@@ -189,7 +204,9 @@ impl DatagramSender {
     /// 两条路都发**同一份**（同一个计数，对方的重放窗口挡掉后到的那份）：总是走更快的那条。Ping、Pong、画面确认用它
     pub fn send<T: Encode<()>>(&self, msg: &T) {
         let Some(d) = self.seal(msg) else { return };
-        if let Some(direct) = self.0.paths.direct() {
+        if let Some(direct) = self.0.paths.direct()
+            && direct.stable_id() != self.0.paths.relay().stable_id()
+        {
             let _ = direct.send_datagram(d.clone());
         }
         if let Err(e) = self.0.paths.relay().send_datagram(d) {

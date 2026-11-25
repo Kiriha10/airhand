@@ -101,10 +101,13 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
     var code by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var errorCode by remember { mutableStateOf<String?>(null) }
+    var errorLan by remember { mutableStateOf(false) }
+    var showLan by remember { mutableStateOf(false) }
+    var lanAddress by rememberSaveable { mutableStateOf("") }
     var serverDetails by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<SavedDevice?>(null) }
     // 端到端握手要用户决定的失败（要配对码 / 对方的身份变了）：哪个控制码、什么问题
-    var askUser by remember { mutableStateOf<Pair<String, Problem>?>(null) }
+    var askUser by remember { mutableStateOf<Triple<String, Problem, String?>?>(null) }
     var deleting by remember { mutableStateOf<SavedDevice?>(null) }
     val clipHasText = rememberClipHasText()
 
@@ -114,15 +117,16 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
         if (phase is RemoteSession.Phase.Failed) {
             error = Messages.problem(ctx, phase.reason)
             errorCode = s.code
-            if (phase.reason.needsPairing) askUser = s.code to phase.reason
+            errorLan = s.lanAddr != null
+            if (phase.reason.needsPairing) askUser = Triple(s.code, phase.reason, s.lanAddr)
             app.endSession(s)
         }
         // 连上了：这台已经在“我的设备”里，输入框清空
         if (phase is RemoteSession.Phase.Live && Code.parse(code) == s.code) code = ""
     }
 
-    fun connect(c: String) {
-        val parsed = Code.parse(c)
+    fun connect(c: String, lanAddr: String? = null) {
+        val parsed = Code.parse(c) ?: if (lanAddr != null) "000000" else null
         if (parsed == null) {
             error = ctx.getString(R.string.problem_invalid_code)
             errorCode = c
@@ -130,10 +134,11 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
         }
         // 已经在连这台了（连点两下、输入法重复提交）
         val cur = app.session.value
-        if (cur != null && cur.code == parsed && cur.phase.value !is RemoteSession.Phase.Failed && cur.phase.value !is RemoteSession.Phase.Closed) return
+        if (cur != null && cur.code == parsed && cur.lanAddr == lanAddr && cur.phase.value !is RemoteSession.Phase.Failed && cur.phase.value !is RemoteSession.Phase.Closed) return
         error = null
         errorCode = null
-        app.startSession(parsed, viewOnly = false)
+        errorLan = false
+        app.startSession(parsed, viewOnly = false, lanAddr = lanAddr)
         focus.clearFocus()
     }
 
@@ -229,6 +234,27 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
             }
         }
 
+        item {
+            Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(stringResource(R.string.lan_connect_title), style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.lan_connect_hint), style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (errorLan) error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                    val busy = session?.lanAddr != null && phase is RemoteSession.Phase.Connecting
+                    Button(onClick = { showLan = true }, enabled = !busy) {
+                        if (busy) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(stringResource(if (busy) R.string.connecting else R.string.lan_connect_title))
+                    }
+                }
+            }
+        }
+
         // 会话还在（例如按了主页键离开了远程画面）：一键回去
         val s = session
         if (s != null && (phase is RemoteSession.Phase.Live || phase is RemoteSession.Phase.Reconnecting)) {
@@ -260,12 +286,12 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
                 error = if (errorCode == d.code && code != d.code) error else null,
                 onClick = {
                     if (waitingCode == d.code || busyCode == d.code) return@DeviceRow
-                    connect(d.code)
+                    connect(d.code, d.lanAddr)
                 },
                 onCancel = { app.endSession() },
                 onRename = { renaming = d },
                 onCopy = {
-                    app.clipboard.write(Code.format(d.code))
+                    app.clipboard.write(d.lanAddr ?: Code.format(d.code))
                     scope.launch { snackbar.showSnackbar(ctx.getString(R.string.copied)) }
                 },
                 onDelete = { deleting = d },
@@ -274,7 +300,19 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
     }
 
     // 对方要配对码、或者对方的身份变了（用户确认是重装了之后重新配对）：输入对方托盘菜单里的配对码再连
-    askUser?.let { (c, p) ->
+    if (showLan) {
+        val hint = stringResource(R.string.problem_invalid_lan_address)
+        EditTextDialog(
+            title = stringResource(R.string.lan_connect_title), initial = lanAddress,
+            label = stringResource(R.string.lan_address_label), supporting = stringResource(R.string.lan_connect_hint),
+            placeholder = "192.168.1.10:4434", keyboardType = KeyboardType.Ascii,
+            confirmLabel = stringResource(R.string.connect),
+            validate = { if (it.isBlank()) hint else null },
+            onDismiss = { showLan = false },
+            onSave = { lanAddress = it.trim(); showLan = false; connect("000000", lanAddress) },
+        )
+    }
+    askUser?.let { (c, p, address) ->
         val hint = stringResource(R.string.pairing_hint)
         EditTextDialog(
             title = stringResource(R.string.pairing_title),
@@ -289,7 +327,7 @@ fun ConnectTab(modifier: Modifier, snackbar: SnackbarHostState, onOpenSettings: 
                 askUser = null
                 error = null
                 errorCode = null
-                app.startSession(c, viewOnly = false, pairing = it.filter(Char::isDigit))
+                app.startSession(c, viewOnly = false, pairing = it.filter(Char::isDigit), lanAddr = address)
             },
         )
     }
@@ -443,7 +481,7 @@ private fun DeviceRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            val sub = listOf(Code.format(d.code), d.hostOs, Messages.ago(ctx, d.lastUsed)).filter { it.isNotBlank() }.joinToString(" · ")
+            val sub = listOf(d.lanAddr ?: Code.format(d.code), d.hostOs, Messages.ago(ctx, d.lastUsed)).filter { it.isNotBlank() }.joinToString(" · ")
             Text(
                 sub,
                 style = MaterialTheme.typography.bodySmall,
@@ -470,7 +508,7 @@ private fun DeviceRow(
                         onClick = { menu = false; onRename() },
                     )
                     DropdownMenuItem(
-                        text = { Text(stringResource(R.string.copy_code)) },
+                        text = { Text(stringResource(if (d.lanAddr != null) R.string.lan_copy_address else R.string.copy_code)) },
                         leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
                         onClick = { menu = false; onCopy() },
                     )

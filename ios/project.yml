@@ -66,7 +66,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: false
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
         UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
-        NSLocalNetworkUsageDescription: "Airhand 会尝试在局域网里和对方设备直连，画面和声音不再绕道服务器，延迟更低。"
+        NSLocalNetworkUsageDescription: "Airhand 在局域网内直接连接你选择的设备，让中转服务器不可用时也能远程控制。"
         NSMicrophoneUsageDescription: "只在你打开“麦克风”时把声音转发给正在控制的电脑，供那里的会议软件和语音输入使用。"
         CFBundleURLTypes:
           - CFBundleURLName: app.airhand.ios

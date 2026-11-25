@@ -239,7 +239,7 @@ struct Seen {
 }
 
 /// `expected`：只认这个指纹；`None` 表示第一次连接，什么证书都接受（指纹记在 `seen` 里）
-fn client_config(expected: Option<[u8; 32]>, seen: Arc<Seen>) -> Result<ClientConfig> {
+fn client_config(expected: Option<[u8; 32]>, seen: Arc<Seen>, alpn: &[u8]) -> Result<ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -250,7 +250,7 @@ fn client_config(expected: Option<[u8; 32]>, seen: Arc<Seen>) -> Result<ClientCo
             seen,
         }))
         .with_no_client_auth();
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    tls.alpn_protocols = vec![alpn.to_vec()];
     let mut cfg = ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     cfg.transport_config(Arc::new(transport_config()));
     Ok(cfg)
@@ -305,12 +305,19 @@ fn interleave(addrs: Vec<SocketAddr>) -> Vec<SocketAddr> {
 /// 连上了的一个地址：endpoint、打洞用的句柄、连接、对方证书的指纹
 type Attempt = (Endpoint, Punch, Connection, [u8; 32]);
 
+#[derive(Clone, Copy)]
+pub(crate) struct Dial {
+    pub alpn: &'static [u8],
+    pub timeout: Duration,
+}
+
 /// 连上服务器的一个地址（QUIC + TLS）
 async fn attempt(
     addr: SocketAddr,
     sni: Arc<str>,
     expected: Option<[u8; 32]>,
     mismatch: Arc<AtomicBool>,
+    dial: Dial,
 ) -> Result<Attempt> {
     let seen = Arc::new(Seen::default());
     let (socket, punch, runtime) =
@@ -318,7 +325,7 @@ async fn attempt(
     let mut endpoint =
         Endpoint::new_with_abstract_socket(EndpointConfig::default(), None, socket, runtime)
             .context("can't create a QUIC endpoint")?;
-    endpoint.set_default_client_config(client_config(expected, seen.clone())?);
+    endpoint.set_default_client_config(client_config(expected, seen.clone(), dial.alpn)?);
     let result = endpoint.connect(addr, &sni)?.await;
     if seen.mismatch.load(Ordering::Relaxed) {
         mismatch.store(true, Ordering::Relaxed);
@@ -340,6 +347,7 @@ async fn connect_any(
     sni: String,
     expected: Option<[u8; 32]>,
     mismatch: Arc<AtomicBool>,
+    dial: Dial,
 ) -> Result<Attempt> {
     const STAGGER: Duration = Duration::from_millis(250);
     type Attempts = JoinSet<Result<Attempt>>;
@@ -348,12 +356,12 @@ async fn connect_any(
     let mut tasks: Attempts = JoinSet::new();
     let mut last_err: Option<anyhow::Error> = None;
     let spawn = |tasks: &mut Attempts, addr: SocketAddr| {
-        tasks.spawn(attempt(addr, sni.clone(), expected, mismatch.clone()));
+        tasks.spawn(attempt(addr, sni.clone(), expected, mismatch.clone(), dial));
     };
     if let Some(addr) = next.next() {
         spawn(&mut tasks, addr);
     }
-    let deadline = tokio::time::sleep(CONNECT_TIMEOUT);
+    let deadline = tokio::time::sleep(dial.timeout);
     tokio::pin!(deadline);
     loop {
         let stagger = tokio::time::sleep(STAGGER);
@@ -398,8 +406,26 @@ pub async fn connect_signal(
     role: Role,
     first: Option<&ClientMsg>,
 ) -> std::result::Result<Signal, Problem> {
+    connect_signal_with(
+        cfg,
+        role,
+        first,
+        Dial {
+            alpn: ALPN,
+            timeout: CONNECT_TIMEOUT,
+        },
+    )
+    .await
+}
+
+pub(crate) async fn connect_signal_with(
+    cfg: &LinkConfig,
+    role: Role,
+    first: Option<&ClientMsg>,
+    dial: Dial,
+) -> std::result::Result<Signal, Problem> {
     let mismatch = Arc::new(AtomicBool::new(false));
-    handshake(cfg, role, first, mismatch.clone())
+    handshake(cfg, role, first, mismatch.clone(), dial)
         .await
         .map_err(|e| {
             if mismatch.load(Ordering::Relaxed) {
@@ -415,11 +441,12 @@ async fn handshake(
     role: Role,
     first: Option<&ClientMsg>,
     mismatch: Arc<AtomicBool>,
+    dial: Dial,
 ) -> Result<Signal> {
     let (addrs, sni) = resolve(&cfg.server).await?;
     let expected = cfg.expected();
     let (endpoint, punch, conn, fp) =
-        connect_any(&cfg.server, addrs, sni, expected, mismatch).await?;
+        connect_any(&cfg.server, addrs, sni, expected, mismatch, dial).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     let hello = ClientHello::new(role, cfg.name.clone(), cfg.os.clone());
     let mut out = framing::encode(&hello);
@@ -429,7 +456,7 @@ async fn handshake(
     send.write_all(&out).await?;
     let mut buf = Vec::new();
     let got = tokio::time::timeout(
-        Duration::from_secs(8),
+        dial.timeout,
         read_frame(&mut recv, MAX_SIGNAL_MSG, &mut buf),
     )
     .await

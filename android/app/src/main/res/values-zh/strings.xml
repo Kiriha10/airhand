@@ -470,4 +470,10 @@
     <string name="tv_scale_fit">完整显示</string>
     <string name="tv_scale_fill">铺满（裁掉边缘）</string>
     <string name="tv_scale_stretch">拉伸全屏</string>
+    <string name="lan_connect_title">局域网连接</string>
+    <string name="lan_connect_hint">同一局域网内可直接控制，无需中转服务器。地址可在 Windows 托盘的“局域网连接”中复制，首次连接需要配对码。</string>
+    <string name="lan_address_label">Windows 局域网地址</string>
+    <string name="lan_copy_address">复制局域网地址</string>
+    <string name="problem_invalid_lan_address">请输入局域网 IP 地址，可附带端口，如 192.168.1.10:4434</string>
+    <string name="problem_lan_unreachable">无法连接局域网设备，请检查地址、局域网和被控端是否运行。%1$s</string>
 </resources>

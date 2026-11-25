@@ -10,7 +10,7 @@
 
 Airhand is a **high-performance, low-latency** remote desktop: the screen is encoded on the GPU (AV1 / HEVC / H.264) at up to 120 fps and sent over QUIC; when the network slows down it skips to the latest frame instead of letting lag pile up; and the mouse pointer is drawn locally, so it moves without delay.
 
-The same program is both the **host** (the device being controlled) and the **controller** (the device you control it from). The two sides meet through a **relay server** that you deploy yourself. It's small, and Docker Compose deploys it with one command. Enter the other side's 6-digit **control code** to connect.
+The same program is both the **host** (the device being controlled) and the **controller** (the device you control it from). For internet connections, enter the host's 6-digit **control code** through your own relay. On the same local network, Android and iPad controllers can connect directly to the address in the Windows tray, even while the relay is unavailable. See [standalone LAN connections](docs/lan.md).
 
 > [!NOTE]
 > **Work in progress (0.3.1).** Build the relay, clients and web service from the same v10 revision; earlier builds cannot be mixed. Video uses one QUIC stream per frame. [Protocol versions](docs/development.md#protocol-versions)

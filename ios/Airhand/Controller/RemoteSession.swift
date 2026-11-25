@@ -32,7 +32,8 @@ final class RemoteSession {
         }
     }
 
-    let code: String
+    private(set) var code: String
+    let lanAddr: String?
     private(set) var phase: Phase = .connecting
     var hostName: String
     private(set) var hostOs: String
@@ -110,15 +111,16 @@ final class RemoteSession {
     @ObservationIgnored private var grantOs = ""
     @ObservationIgnored var onClipboardFiles: ((Int64, [JSON]) -> Void)?
 
-    init(app: AppModel, code: String, resume: String?, hostKey: String?, pairing: String?) {
+    init(app: AppModel, code: String, resume: String?, hostKey: String?, pairing: String?, lanAddr: String? = nil) {
         self.app = app
         self.client = app.controller
         self.code = code
+        self.lanAddr = lanAddr
         self.resume = resume
         self.hostKey = hostKey
         self.pairing = pairing
         saved = app.devices.get(code)
-        hostName = saved?.title ?? Code.format(code)
+        hostName = saved?.title ?? lanAddr ?? Code.format(code)
         hostOs = saved?.hostOs ?? ""
         audioOn = app.settings.audio
         avSyncOn = app.settings.avSync
@@ -134,12 +136,15 @@ final class RemoteSession {
     }
 
     func start() {
-        handlerIds.append(client.onHostOnline { [weak self] c in if c == self?.code { self?.signal() } })
-        var was: ServerState?
-        handlerIds.append(client.onServer { [weak self] s in
-            if s.isConnected, was?.isConnected != true { self?.signal() }
-            was = s
-        })
+        if lanAddr == nil {
+            let target = Code.parse(code) ?? code
+            handlerIds.append(client.onHostOnline { [weak self] c in if c == target { self?.signal() } })
+            var was: ServerState?
+            handlerIds.append(client.onServer { [weak self] s in
+                if s.isConnected, was?.isConnected != true { self?.signal() }
+                was = s
+            })
+        }
         let t = Thread { [weak self] in self?.run() }
         t.name = "airhand-session"
         t.qualityOfService = .userInteractive
@@ -188,13 +193,13 @@ final class RemoteSession {
             if closed { break }
             let h = client.handle
             // 画质、显示器、防窥这些状态都在主线程上改：在主线程上读
-            let (settings, privacy) = DispatchQueue.main.sync { (currentSettings(), privacyWanted) }
+            let (settings, privacy, sessionCode) = DispatchQueue.main.sync { (currentSettings(), privacyWanted, code) }
             sentSettings = settings
             let withAudio = audioOn && !background
             sentAudio = withAudio
             // 防窥模式也在握手里就说：断线重连时对方一直保持着，它的屏幕不会在重连的间隙露出来
-            let cmd = Commands.connect(code: code, resume: resume, settings: settings, hostKey: hostKey, pairing: pairing, audio: withAudio,
-                                       privacy: privacy)
+            let cmd = Commands.connect(code: sessionCode, resume: resume, settings: settings, hostKey: hostKey, pairing: pairing, audio: withAudio,
+                                       privacy: privacy, lanAddr: lanAddr)
             let r = Json.parse(Native.ctlCall(h, Json.string(cmd))) ?? ["err": ["kind": "failed", "detail": "bad reply"]]
             if closed {
                 if let ok = r.obj("ok"), let s = ok.int("sid") { _ = Native.ctlCall(h, Json.string(Commands.disconnect(UInt32(s)))) }
@@ -225,6 +230,10 @@ final class RemoteSession {
             let p = Problem.parse(r.obj("err"))
             attempts += 1
             switch p.kind {
+            case "lanUnreachable":
+                if !connectedOnce { setPhase(.failed(p)); return }
+                setPhase(.reconnecting(p))
+                sleep(1.6)
             case "hostOffline":
                 setPhase(.waitingHost(p))
                 sleep(60)
@@ -252,6 +261,12 @@ final class RemoteSession {
     private func waitServer(_ limit: Double) -> Problem? {
         let start = Date()
         while !closed {
+            if lanAddr != nil {
+                if client.handle != 0 { return nil }
+                if Date().timeIntervalSince(start) > limit { return Problem(kind: "lanUnreachable") }
+                Thread.sleep(forTimeInterval: 0.1)
+                continue
+            }
             let s = client.state
             switch s {
             case .connected:
@@ -278,6 +293,7 @@ final class RemoteSession {
         grantName = ok.str("hostName") ?? ""
         grantOs = ok.str("hostOs") ?? ""
         main {
+            if let text = ok.str("code"), let code = Code.parse(text) { self.code = code }
             self.safety = safety?.isEmpty == false ? safety : nil
             if !self.grantName.isEmpty, self.saved?.alias.isEmpty != false { self.hostName = self.grantName }
             if !self.grantOs.isEmpty { self.hostOs = self.grantOs }
@@ -289,11 +305,12 @@ final class RemoteSession {
         }
         if audioOn && !background { startAudio(tell: !sentAudio) } else if sentAudio { command { Commands.audio($0, false) } }
         if background { applyBackground() }
-        Log.info("connected to \(code) (\(grantName), \(grantOs))")
+        let announcedCode = ok.str("code") ?? ""
+        Log.info("connected to \(announcedCode) (\(grantName), \(grantOs))")
     }
 
     private func onHello() {
-        app?.devices.connected(code: code, name: grantName, os: grantOs, resume: resume ?? "", hostKey: hostKey)
+        app?.devices.connected(code: code, name: grantName, os: grantOs, resume: resume ?? "", hostKey: hostKey, lanAddr: lanAddr)
         connectedOnce = true
         setPhase(.live)
     }

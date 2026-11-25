@@ -96,11 +96,6 @@ final class ControllerClient {
         lock.lock()
         if _handle != 0 { lock.unlock(); return }
         let s = settings()
-        guard !s.server.trimmingCharacters(in: .whitespaces).isEmpty else {
-            lock.unlock()
-            setState(.disconnected(Problem(kind: "failed", detail: L.t("server_not_set"))), error: L.t("server_not_set"))
-            return
-        }
         let cfg: JSON = [
             "server": s.server, "fingerprint": s.fingerprint, "trust": s.trustJson,
             "name": AppModel.deviceName(s), "os": AppModel.osName, "identity": IdentityStore.load() ?? NSNull(),

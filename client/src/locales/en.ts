@@ -340,6 +340,8 @@ const en: Record<MsgKey, Msg> = {
   "problem.serverLost": "Lost connection to the server: {detail}",
   "problem.notConnected": "Not connected to the server yet, please try again shortly",
   "problem.invalidCode": "The control code must be 6 digits",
+  "problem.invalidLanAddress": "Enter a local IP address, optionally with a port, such as 192.168.1.10:4434",
+  "problem.lanUnreachable": "Cannot reach the LAN device. Check the address, local network, and host: {detail}",
   "problem.codeNotFound": "Control code not found, or the remote computer is offline",
   "problem.rateLimited": "Too many attempts, please try again later",
   "problem.hostBusy": "The remote computer has reached its session limit",

@@ -186,6 +186,7 @@ fn connect_options() -> (Value, ConnectOptions) {
             "privacy": true
         }),
         ConnectOptions {
+            lan_addr: None,
             resume: Some([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
             host_key: Some("ab".repeat(32)),
             pairing: Some("482913".into()),

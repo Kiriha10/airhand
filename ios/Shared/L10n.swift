@@ -14,6 +14,12 @@ enum L {
 
     // MARK: 中文
     static let zhTable: [String: String] = [
+        "lan_connect_title": "局域网连接",
+        "lan_connect_hint": "同一局域网内可直接控制，无需中转服务器。地址可在 Windows 托盘的“局域网连接”中复制，首次连接需要配对码。",
+        "lan_address_label": "Windows 局域网地址",
+        "lan_copy_address": "复制局域网地址",
+        "problem_invalid_lan_address": "请输入局域网 IP 地址，可附带端口，如 192.168.1.10:4434",
+        "problem_lan_unreachable": "无法连接局域网设备，请检查地址、局域网和被控端是否运行。",
         "cancel": "取消", "close": "关闭", "save": "保存", "delete": "删除", "done": "完成", "undo": "撤销",
         "copy": "复制", "copied": "已复制", "share": "分享", "ok": "好", "on": "开", "off": "关", "retry": "立即重试",
         "connect": "连接", "connecting": "连接中…", "disconnect": "断开", "rename": "重命名", "forget": "忘掉",
@@ -28,7 +34,7 @@ enum L {
         "device_delete_title": "删除设备？", "device_delete_text": "从“我的设备”里删除“%@”。之后需要重新输入控制码才能连接。",
         "device_deleted": "已删除“%@”", "device_name_placeholder": "名称",
         "last_connected": "上次连接 %@", "session_active": "正在连接 · 点按回到远程画面", "session_live_card": "远程中 · 点按回到画面",
-        "setup_server_title": "先设置服务器", "setup_server_body": "Airhand 通过你自己部署的中转服务器连接设备。在“设置”里填上服务器地址就能开始使用。",
+        "setup_server_title": "跨网络连接", "setup_server_body": "跨网络连接需要在“设置”里配置中转服务器。同一局域网可直接使用“局域网连接”。",
         "go_settings": "去设置",
         // 配对
         "pairing_title": "输入配对码", "pairing_hint": "对方显示的 6 位配对码（电脑在 Airhand 托盘菜单里，手机在 Airhand 的“共享本机”页）。配对之后对方记住这台设备，下次不用再输",
@@ -189,6 +195,12 @@ enum L {
 
     // MARK: English
     static let enTable: [String: String] = [
+        "lan_connect_title": "LAN connection",
+        "lan_connect_hint": "Control directly on the same local network, without a relay. Copy the address from the Windows tray’s LAN connection menu. The first connection needs the pairing code.",
+        "lan_address_label": "Windows LAN address",
+        "lan_copy_address": "Copy LAN address",
+        "problem_invalid_lan_address": "Enter a local IP address, optionally with a port, such as 192.168.1.10:4434",
+        "problem_lan_unreachable": "Cannot reach the LAN device. Check the address, local network, and whether the host is running.",
         "cancel": "Cancel", "close": "Close", "save": "Save", "delete": "Delete", "done": "Done", "undo": "Undo",
         "copy": "Copy", "copied": "Copied", "share": "Share", "ok": "OK", "on": "On", "off": "Off", "retry": "Retry now",
         "connect": "Connect", "connecting": "Connecting…", "disconnect": "Disconnect", "rename": "Rename", "forget": "Forget",
@@ -203,7 +215,7 @@ enum L {
         "device_delete_title": "Delete device?", "device_delete_text": "Remove “%@” from My devices. You'll need the control code to connect again.",
         "device_deleted": "Deleted “%@”", "device_name_placeholder": "Name",
         "last_connected": "Last connected %@", "session_active": "Connecting · tap to return", "session_live_card": "Remote session · tap to return",
-        "setup_server_title": "Set up a server first", "setup_server_body": "Airhand connects devices through your own relay server. Enter its address in Settings to get started.",
+        "setup_server_title": "Connect over the internet", "setup_server_body": "Configure a relay in Settings for internet connections. On the same local network, use LAN connection directly.",
         "go_settings": "Open Settings",
         "pairing_title": "Enter the pairing code", "pairing_hint": "The 6-digit pairing code shown on the other device (in the Airhand tray menu on a computer, on the Share page on a phone). It remembers this device afterwards.",
         "pairing_label": "Pairing code", "session_safety": "Safety code %@",
@@ -364,6 +376,8 @@ enum Messages {
         case "serverLost": return L.t("problem_server_lost", d)
         case "notConnected": return L.t("problem_not_connected")
         case "invalidCode": return L.t("problem_invalid_code")
+        case "invalidLanAddress": return L.t("problem_invalid_lan_address")
+        case "lanUnreachable": return L.t("problem_lan_unreachable")
         case "codeNotFound": return L.t("problem_code_not_found")
         case "rateLimited": return L.t("problem_rate_limited")
         case "hostBusy": return L.t("problem_host_busy")

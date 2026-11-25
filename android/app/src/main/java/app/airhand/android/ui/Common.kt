@@ -222,6 +222,7 @@ fun EditTextDialog(
     validate: (String) -> String? = { null },
     singleLine: Boolean = true,
     keyboardType: KeyboardType = KeyboardType.Text,
+    confirmLabel: String? = null,
 ) {
     var text by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
     val error = validate(text.text)
@@ -250,7 +251,7 @@ fun EditTextDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onSave(text.text) }, enabled = error == null) { Text(stringResource(R.string.save)) }
+            TextButton(onClick = { onSave(text.text) }, enabled = error == null) { Text(confirmLabel ?: stringResource(R.string.save)) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
